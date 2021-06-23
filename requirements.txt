@@ -1,1 +1,9 @@
 matplotlib
+requests
+torch
+fair-esm
+biopython
+joblib
+compress_pickle
+sklearn
+pandas

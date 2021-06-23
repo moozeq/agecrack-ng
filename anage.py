@@ -7,14 +7,11 @@ from dataclasses import dataclass
 from itertools import chain
 from pathlib import Path
 from statistics import mean, median
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import requests
 from matplotlib import pyplot as plt
-
-from ncbi import NCBIDatabase
-from uniprot import download_proteomes_by_names
 
 
 @dataclass
@@ -83,6 +80,10 @@ class AnAgeDatabase:
                 for entry in reader
                 if (entry_obj := AnAgeEntry.read_vertebrate_from_entry(entry))
             ]
+            self.vertebrates_longevity = {
+                entry_obj.species_full_name: entry_obj.longevity
+                for entry_obj in self.vertebrates
+            }
             logging.info(f'Loaded {len(self.vertebrates)} vertebrates from file: {filename}')
             logging.info(f'Vertebrates classes: {self.species_classes}')
 
@@ -100,6 +101,10 @@ class AnAgeDatabase:
     @property
     def species_names(self):
         return [entry.species_name for entry in self.vertebrates]
+
+    def get_longevity(self, species_full_name: str) -> Optional[float]:
+        """Get longevity for specific species, otherwise return None"""
+        return self.vertebrates_longevity.get(species_full_name, None)
 
     def filter(self, filter_name: str) -> list:
         """Filter vertebrates based on predefined filters"""
@@ -130,38 +135,38 @@ class AnAgeDatabase:
             ax.axvline(median(sp), color='g', linestyle='--', label=f'median {median(sp):.2f}')
             ax.legend()
 
-    def analyze(self, ncbi_db: NCBIDatabase):
-        names = download_proteomes_by_names(self.species_full_names, 'data/proteomes')
+    def analyze(self, names: List[str]):
         names = [name[len('data/proteomes/'):-len('.fasta')].replace('_', ' ') for name in names]
         self.longevity_hists()
         self.vertebrates = [entry for entry in self.vertebrates if entry.species_full_name in names]
         self.longevity_hists()
         plt.show()
-        sys.exit(0)
 
-        def name_in_ncbi(n):
-            for n_entry in ncbi_db.animals:
-                if n in n_entry.species_name:
-                    return n_entry
-            return None
-
-        c = []
-        n = []
-        for entry in self.vertebrates:
-            if ncbi_entry := name_in_ncbi(entry.species_full_name):
-                c.append(entry)
-                n.append(ncbi_entry)
-
-        logging.info(f'Matched {len(c)}/{len(self.species_full_names)} with NCBI database!')
-        logging.info(f'Classes = {Counter([ce.species_class for ce in c])}')
-
-        size = sum(ne.genome_size for ne in n)
-        logging.info(f'Size for all genomes = {size:.2f}MB')
-
-        species = {ce.species_full_name: ne.species_name for ce, ne in zip(c, n)}
-        with open('data/species.json', 'w') as f:
-            import json
-            json.dump(species, f, indent=4)
+        # sys.exit(0)
+        #
+        # def name_in_ncbi(n):
+        #     for n_entry in ncbi_db.animals:
+        #         if n in n_entry.species_name:
+        #             return n_entry
+        #     return None
+        #
+        # c = []
+        # n = []
+        # for entry in self.vertebrates:
+        #     if ncbi_entry := name_in_ncbi(entry.species_full_name):
+        #         c.append(entry)
+        #         n.append(ncbi_entry)
+        #
+        # logging.info(f'Matched {len(c)}/{len(self.species_full_names)} with NCBI database!')
+        # logging.info(f'Classes = {Counter([ce.species_class for ce in c])}')
+        #
+        # size = sum(ne.genome_size for ne in n)
+        # logging.info(f'Size for all genomes = {size:.2f}MB')
+        #
+        # species = {ce.species_full_name: ne.species_name for ce, ne in zip(c, n)}
+        # with open('data/species.json', 'w') as f:
+        #     import json
+        #     json.dump(species, f, indent=4)
 
     @staticmethod
     def _download_anage_database(output_dir: str):

@@ -1,18 +1,11 @@
 import json
 import logging
-import sys
 from pathlib import Path
 from typing import List
 
 import requests
 
-
-def normalize_species(sp: str) -> str:
-    """Change species name, removing characters which may cause issues in pipeline."""
-    not_valid = [' ', '-', '/', '(', ')', '#', ':', ',', ';', '[', ']', '\'', '"', '___', '__']
-    for ch in not_valid:
-        sp = sp.replace(ch, '_')
-    return sp
+from utils import normalize_species
 
 
 class Uniprot:
