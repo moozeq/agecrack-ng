@@ -12,9 +12,21 @@ from utils import get_name_from_filename, load_records, normalize_species
 MODEL, ALPHABET = esm.pretrained.esm1b_t33_650M_UR50S()
 BATCH_CONVERTER = ALPHABET.get_batch_converter()
 MAX_SEQ_LEN = 1022
+DIR_DATA = 'data'
 
 
 class ESM:
+    """Encoding sequence to an image using ESM model.
+
+    Example:
+        >>> esm_model = ESM()
+        >>> esm_model.process_files(['data/proteomes/Homo_sapiens.fasta', 'Hucho_hucho.fasta'])
+    """
+
+    def __init__(self):
+        Path(f'{DIR_DATA}/plots').mkdir(parents=True, exist_ok=True)
+        Path(f'{DIR_DATA}/tensors').mkdir(parents=True, exist_ok=True)
+
     @staticmethod
     def process_files(species_fastas: List[str]):
         for fn in species_fastas:
@@ -33,8 +45,8 @@ class ESM:
 
     @staticmethod
     def process_single(species: str, data: Tuple[str, str]):
-        sp_path_ten = f'data/tensors/{species}'
-        sp_path_plot = f'data/plots/{species}'
+        sp_path_ten = f'{DIR_DATA}/tensors/{species}'
+        sp_path_plot = f'{DIR_DATA}/plots/{species}'
         fig_file = f'{sp_path_plot}_{data[0]}.png'
         tensor_file = f'{sp_path_ten}_{data[0]}.gz'
 
@@ -74,8 +86,8 @@ class ESM:
         # for i, (seq_id, seq) in enumerate(data):
         #     output[seq_id] = token_representations[i, 1: len(seq) + 1].mean(0)
 
-        sp_path_ten = f'data/tensors/{species}'
-        sp_path_plot = f'data/plots/{species}'
+        sp_path_ten = f'{DIR_DATA}/tensors/{species}'
+        sp_path_plot = f'{DIR_DATA}/plots/{species}'
 
         # Look at the unsupervised self-attention map contact predictions
         import matplotlib.pyplot as plt

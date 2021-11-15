@@ -2,11 +2,9 @@
 
 ## Intro
 
-In this project I was at first trying to reproduce results from
-publication: [A genomic predictor of lifespan in vertebrates](https://www.nature.com/articles/s41598-019-54447-w), where
-scientists based on CpG island density around promoters from genomic data
-and [AnAge](https://genomics.senescence.info/species/index.html) database built `glmnet` predictor of lifespan in
-vertebrates.
+In this project I was at first trying to reproduce results from publication: A genomic predictor of lifespan in
+vertebrates [1], where scientists based on CpG island density around promoters from genomic data and AnAge database [2]
+built `glmnet` predictor of lifespan in vertebrates.
 
 Unfortunately, due to performance and memory limitations I wasn't be able to reproduce their results, so I've tried to
 build my own genomic lifespan predictor. Eventually, I achieved a bit worse results, but my predictor can be built very
@@ -16,7 +14,7 @@ easily, much faster and doesn't require much memory.
 
 Current data from COVID-19 pandemic gives us some interesting results. The most recent data makes us sure, that in
 general, we do not die from diseases, but from being old, which can be easily observed based on mortality when it comes
-to COVID-19:
+to COVID-19 [3]:
 
 ![covid](imgs/covid.png)
 
@@ -32,7 +30,7 @@ In previously mentioned paper, researchers obtained around 250 genomes from diff
 against ~25 thousands of human promoters sequences. In results, they've got CpG islands for each promoter, and then they
 measured CG densities around them. Based on that, they combined data into 25k x 250 table with average densities around
 promoters and used `glmnet` to select only 44 of them which serve as a genomic predictor. They achieved fine results
-when it comes to predicting lifespan in vertebrates:
+when it comes to predicting lifespan in vertebrates [1]:
 
 ![pred](imgs/pred.png)
 
@@ -41,16 +39,16 @@ provided whole table with densities and in that case I'd be able to reproduce th
 like `random-forest` instead of `glmnet`. Unluckily, they've only provided table with selected 44 promoter.
 
 I found out that I won't be able to reproduce their results, when I counted how many data I need to download first. I
-write some scripts (`ncbi.py`) which match data from AnAge database and genomes from NCBI. In that way, I learned, that
-for 250 species' genomes I'd need to download around 1TB of compressed data (I don't even have that much space on my PC,
-without mentioning uncompressing that data), and with my internet connection it'd take ~28h.
+write some scripts (`ncbi.py`) which match data from AnAge database and genomes from NCBI [5]. In that way, I learned,
+that for 250 species' genomes I'd need to download around 1TB of compressed data (I don't even have that much space on
+my PC, without mentioning uncompressing that data), and with my internet connection it'd take ~28h.
 
 ## A proteomic predictor of lifespan
 
 After failing in reproducing results, I focused on trying to reduce space and performance limitations. Of course, my
-main idea was to not use whole genomes. Instead, I've used only proteomes, which reduced space requirements more than
-x250 times (from 1TB compressed to 4GB uncompressed data). Proteomes are also easier and faster to compute then whole
-genomes, so I was able to run simple analysis on my PC, instead of servers cluster.
+main idea was to not use whole genomes. Instead, I've used only proteomes from Uniprot database [6], which reduced space
+requirements more than x250 times (from 1TB compressed to 4GB uncompressed data). Proteomes are also easier and faster
+to compute then whole genomes, so I was able to run simple analysis on my PC, instead of servers cluster.
 
 My first idea for proteomes, was to:
 
@@ -60,9 +58,8 @@ My first idea for proteomes, was to:
    AnAge database)
 4. Predict lifespans for test dataset
 
-I found pretrained, state-of-the-art, [esm neural network](https://github.com/facebookresearch/esm) which allows
-transforming proteins' sequences into vectors of floats, representing some biological features. Those vectors can be
-presented as images:
+I found pretrained, state-of-the-art, esm neural network [4] which allows transforming proteins' sequences into vectors
+of floats, representing some biological features. Those vectors can be presented as images:
 
 ![esm](imgs/esm.png)
 
@@ -87,21 +84,8 @@ Next step was to determine best clustering parameters, which I've done on repair
 After that, I just needed to determine `random-forest` regressor hyperparameters and finally obtained, maybe a little
 worse, but not that bad, results for repairing proteins dataset:
 
-![results](imgs/train_10_7.png)
-![results](imgs/test_10_7.png)
-
-## Tools and methods
-
-Below, I'd like to present all main tools and methods that I've used:
-
-|tool/algorithm|purpose|
-|:---:|:---:|
-|AnAge database|obtaining species lifespans for training and testing regressor|
-|mmseqs2|clustering amino acids sequences from specified dataset into groups|
-|RandomForestRegressor|predicting lifespan of species, trained on vectors with counts for proteins in each cluster|
-|esm|neural network for extracting biological features from amino acid sequences|
-|NCBI API|matching species from AnAge database and retrieving information about their genomes|
-|Uniprot API|matching species from AnAge database and obtaining their proteomes|
+![results_train](imgs/train_10_7.png)
+![results_test](imgs/test_10_7.png)
 
 ## Results
 
@@ -119,10 +103,41 @@ bests predictors' scores:
 |ribosome|0.30|3.03e-05|
 |RNA|0.27|4.90e-06|
 
+## Tools and methods
+
+Below, I'd like to present all main tools and methods that I've used:
+
+|tool/algorithm|purpose|
+|:---:|:---:|
+|AnAge database|obtaining species lifespans for training and testing regressor|
+|mmseqs2|clustering amino acids sequences from specified dataset into groups|
+|RandomForestRegressor|predicting lifespan of species, trained on vectors with counts for proteins in each cluster|
+|esm|neural network for extracting biological features from amino acid sequences|
+|NCBI API|matching species from AnAge database and retrieving information about their genomes|
+|Uniprot API|matching species from AnAge database and obtaining their proteomes|
+
 ## Discussion
 
 Such correlation between repair proteins dataset and lifespan predictor may be a good indicator what's most important
 when it comes to live to be very old. It confirms the general idea, that repairing proteins are huge factor in all
-species' lifespans and their variability may play very important role. Same conclusions may be made for cells signaling,
-where membrane proteins act as transmitters and receivers, and allow cells to reproduce or arrest them in case of any
-error which is the main mechanism preventing cancer development.
+species' lifespans, and their variability may play very important role. Same conclusions may be made for cells
+signaling, where membrane proteins act as transmitters and receivers, and allow cells to reproduce or arrest them in
+case of any error which is the main mechanism preventing cancer development.
+
+## References
+
+1. Mayne, B., Berry, O., Davies, C. et al. A genomic predictor of lifespan in vertebrates. Sci Rep 9, 17866 (2019)
+   . https://doi.org/10.1038/s41598-019-54447-w
+2. Tacutu R, Thornton D, Johnson E, Budovsky A, Barardo D, Craig T, Diana E, Lehmann G, Toren D, Wang J, Fraifeld VE, de
+   Magalhães JP. Human Ageing Genomic Resources: new and updated databases. Nucleic Acids Res. 2018 Jan 4;46(D1):
+   D1083-D1090. doi: 10.1093/nar/gkx1042. PMID: 29121237; PMCID: PMC5753192.
+3. Santesmasses, D., Castro, J.P., Zenin, A.A., Shindyapina, A.V., Gerashchenko, M.V., Zhang, B., Kerepesi, C., Yim,
+   S.H., Fedichev, P.O. and Gladyshev, V.N. (2020), COVID-19 is an emergent disease of aging. Aging Cell, 19:
+   e13230. https://doi.org/10.1111/acel.13230
+4. Biological structure and function emerge from scaling unsupervised learning to 250 million protein sequences.
+   Alexander Rives, Joshua Meier, Tom Sercu, Siddharth Goyal, Zeming Lin, Jason Liu, Demi Guo, Myle Ott, C. Lawrence
+   Zitnick, Jerry Ma, Rob Fergus. Proceedings of the National Academy of Sciences Apr 2021, 118 (15) e2016239118; DOI:
+   10.1073/pnas.2016239118
+5. National Center for Biotechnology Information (NCBI)[Internet]. Bethesda (MD): National Library of Medicine (US),
+   National Center for Biotechnology Information. Available from: https://www.ncbi.nlm.nih.gov/
+6. UniProt: the universal protein knowledgebase in 2021. Nucleic Acids Res. 49:D1 (2021)

@@ -7,3 +7,7 @@ joblib
 compress_pickle
 sklearn
 pandas
+seaborn
+fastcluster
+tensorflow
+h5py
