@@ -279,8 +279,8 @@ def load_grid_params(mode: str, model: str):
                 'depth': [18]
             },
             'en': {
-                'alpha': [0.01],
-                'l1_ratio': [0.7]
+                'alpha': [0.0001],
+                'l1_ratio': [0.5]
             },
             'ann': {}
         }

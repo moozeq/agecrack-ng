@@ -148,10 +148,10 @@ class Model:
         y: DataFrame = np.log(self.data['longevity'])  # Longevity in ln(years)
 
         # Split dataset into training set and test set
-        # bins = np.linspace(0, len(X), len(X))
-        # y_binned = np.digitize(y, bins)
+        bins = np.linspace(0, len(X), 2 * len(X))
+        y_binned = np.digitize(y, bins)
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1, stratify=y_binned)
         logging.info(f'y_train = ({min(y_train):.2f}, {max(y_train):.2f}, {mean(y_train):.2f}), '
                      f'y_test = ({min(y_test):.2f}, {max(y_test):.2f}, {mean(y_test):.2f})')
 
@@ -486,7 +486,7 @@ class RF(Model):
 
 class EN(Model):
     def train_model(self, X_train, y_train, params):
-        self.model = ElasticNet(**params, max_iter=1000)
+        self.model = ElasticNet(**params, max_iter=10000)
 
         # Train the model using the training sets
         self.model.fit(X_train, y_train)
