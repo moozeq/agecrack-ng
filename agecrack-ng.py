@@ -9,7 +9,7 @@ import numpy as np
 
 from anage import AnAgeDatabase, AnAgeEntry
 from mmseq import run_mmseqs_pipeline, MmseqConfig
-from models import Model, RF, EN, ANN, ModelsConfig
+from models import Model, RF, EN, ANN, ModelsConfig, ENCV
 from ncbi import NCBIDatabase
 from prot_encode import ESM
 from uniprot import download_proteomes_by_names
@@ -119,14 +119,14 @@ def run_analysis(records_file: str,
     else:
         m = model.from_file(results_file, species_map, class_filter, ontology_file)
 
-    score, score_test = m.process(params, out_directory, models_config)
+    score = m.process(params, out_directory, models_config)
 
     m_results = {
         'params': [mmseq_config.min_seq_id, mmseq_config.c, mmseq_config.cov_mode],
-        'scores': [score, score_test]
+        'score': score
     }
     logging.info(f'Model params: ({mmseq_config.min_seq_id}, {mmseq_config.c}, {mmseq_config.cov_mode}) '
-                 f'Model scores: ({score:.2f}, {score_test:.2f})')
+                 f'Model score: {score:.2f}')
     return m_results, m
 
 
@@ -218,6 +218,44 @@ def analysis_check_en(records_file: str,
     load_and_add_results(f'{out_directory}/check.json', current_results)
 
 
+def analysis_check_encv(records_file: str,
+                        species_map: Dict[str, dict],
+                        class_filter: str,
+                        proteins_count: str,
+                        grid_params: dict,
+                        ontology_file: str,
+                        mmseq_config: MmseqConfig,
+                        models_config: ModelsConfig,
+                        anage_db: AnAgeDatabase,
+                        out_directory: str):
+    """Do Elastic Net Regressor with cross validation analysis"""
+
+    current_results = []
+    results_dict = Model.read_results_file(res) if Path(res := f'{out_directory}/results.json').exists() else {}
+    params = grid_params
+    results, encv = run_analysis(records_file,
+                                 out_directory,
+                                 species_map,
+                                 params,
+                                 class_filter,
+                                 ontology_file,
+                                 mmseq_config,
+                                 models_config,
+                                 anage_db,
+                                 ENCV,
+                                 results_dict)
+
+    logging.info(f'Analysis done on {proteins_count} '
+                 f'proteins from {len(species_map)} species\n'
+                 f'Model parameters: {str(params)}')
+    current_results.append({
+        'results': results,
+        'params': params
+    })
+
+    load_and_add_results(f'{out_directory}/check.json', current_results)
+
+
 def analysis_check_ann(records_file: str,
                        species_map: Dict[str, dict],
                        class_filter: str,
@@ -282,6 +320,9 @@ def load_grid_params(mode: str, model: str):
                 'alpha': [0.0001],
                 'l1_ratio': [0.5]
             },
+            'encv': {
+                'l1_ratio': [0.1, 0.5, 0.7, 0.9, 0.95, 0.99, 1.0]
+            },
             'ann': {}
         }
     return predef_grid_params[model]
@@ -296,9 +337,14 @@ def load_mmseq_config(cluster_file: str, reload: bool, mmseq_force: bool, mmseq_
     return mmseq_config
 
 
-def load_models_config(models_reuse: bool, plots_show: bool, plots_annotate: bool):
-    # create and upadte ``PlotsConfig``
-    models_config = ModelsConfig(models_reuse, plots_show, plots_annotate)
+def load_models_config(models_reuse: bool,
+                       plots_show: bool,
+                       plots_annotate: bool,
+                       plots_annotate_threshold: float,
+                       rand: int,
+                       bins: int):
+    # create and update ``PlotsConfig``
+    models_config = ModelsConfig(models_reuse, plots_show, plots_annotate, plots_annotate_threshold, rand, bins)
     return models_config
 
 
@@ -317,7 +363,7 @@ if __name__ == '__main__':
                              '"mmseqs-estimation" produces additional plots for mmseqs params estimation, '
                              '"full" runs whole ontology and vectors analysis')
     parser.add_argument('--model',
-                        type=str, default='en', choices=['rf', 'en', 'ann'],
+                        type=str, default='encv', choices=['rf', 'encv', 'en', 'ann'],
                         help='ML model')
     parser.add_argument('--filters',
                         nargs='+', default=[''],
@@ -351,12 +397,21 @@ if __name__ == '__main__':
     parser.add_argument('--models-reuse',
                         action='store_true',
                         help='Reuse ML models from files if exist')
+    parser.add_argument('--models-rand',
+                        type=int, default=1,
+                        help='Random state for splitting data for training and testing')
+    parser.add_argument('--models-bins',
+                        type=int, default=0,
+                        help='How many bins for stratifying data, if not specified - number of species divided by 2')
     parser.add_argument('--models-plots-show',
                         action='store_true',
                         help='Show plots for each model')
     parser.add_argument('--models-plots-annotate',
                         action='store_true',
                         help='Annotate points on models plots with species names')
+    parser.add_argument('--models-plots-annotate-threshold',
+                        type=float, default=0.5,
+                        help='Difference between predicted and known lifespan that should be annotated')
     parser.add_argument('--mmseq-threshold',
                         type=int, default=0,
                         help='Clusters under strength of this threshold will be filter out')
@@ -433,13 +488,15 @@ if __name__ == '__main__':
 
         analysis_funcs = {
             'rf': analysis_check_rf,
+            'encv': analysis_check_encv,
             'en': analysis_check_en,
             'ann': analysis_check_ann
         }
 
         grid_params = load_grid_params(args.mode, args.model)
         mmseq_config = load_mmseq_config(cluster_file, args.reload, args.mmseq_force, args.mmseq_threshold)
-        models_config = load_models_config(args.models_reuse, args.models_plots_show, args.models_plots_annotate)
+        models_config = load_models_config(args.models_reuse, args.models_plots_show, args.models_plots_annotate,
+                                           args.models_plots_annotate_threshold, args.models_rand, args.models_bins)
 
         # run proper function based on selected model
         analysis_funcs[args.model](

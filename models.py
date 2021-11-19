@@ -13,12 +13,12 @@ from compress_pickle import compress_pickle
 from keras import Sequential
 from keras.models import load_model
 from matplotlib import pyplot as plt
-from numpy import absolute, ndarray
+from numpy import ndarray
 from pandas import DataFrame
 from scipy.stats import pearsonr
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import ElasticNet
-from sklearn.model_selection import train_test_split, cross_val_score, KFold
+from sklearn.linear_model import ElasticNet, ElasticNetCV
+from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers
 
 
@@ -27,6 +27,9 @@ class ModelsConfig:
     models_reuse: bool = False
     plots_show: bool = False
     plots_annotate: bool = False
+    plots_annotate_threshold: float = 0.5
+    rand: int = 1
+    bins: int = 0
     plots_save: bool = True
 
 
@@ -135,10 +138,24 @@ class Model:
     def process(self,
                 params: dict,
                 out_dir: str,
-                models_config: ModelsConfig) -> (float, float):
+                models_config: ModelsConfig) -> float:
         """Train model on data and return train score and test score"""
         model_name = type(self).__name__
-        file_suffix = '_'.join(str(p) for p in params.values())
+
+        def map_type(t):
+            if type(t) == str:
+                return t
+            elif type(t) == int:
+                return str(t)
+            elif type(t) == float:
+                return f'{t:.1e}'
+            else:
+                return 'X'
+
+        file_suffix = '_'.join(
+            map_type(p)
+            for p in (list(params.values()) + [models_config.rand])
+        )
         model_file = f'{out_dir}/models/model_{file_suffix}_{model_name}{self.get_ext()}'
         for new_dir in ['plots', 'models', 'ontology']:
             Path(f'{out_dir}/{new_dir}').mkdir(parents=True, exist_ok=True)
@@ -148,10 +165,12 @@ class Model:
         y: DataFrame = np.log(self.data['longevity'])  # Longevity in ln(years)
 
         # Split dataset into training set and test set
-        bins = np.linspace(0, len(X), 2 * len(X))
+        bins_count = len(y) // 2 if not models_config.bins else models_config.bins
+        bins = np.linspace(0, len(y), bins_count)
         y_binned = np.digitize(y, bins)
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1, stratify=y_binned)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=models_config.rand,
+                                                            stratify=y_binned)
         logging.info(f'y_train = ({min(y_train):.2f}, {max(y_train):.2f}, {mean(y_train):.2f}), '
                      f'y_test = ({min(y_test):.2f}, {max(y_test):.2f}, {mean(y_test):.2f})')
 
@@ -159,15 +178,12 @@ class Model:
         if Path(model_file).exists() and models_config.models_reuse:
             self.load_model(model_file)
         else:
+            logging.info(f'Training model on {len(y_train)} species')
             self.train_model(X_train, y_train, params)
             self.save_model(model_file)
 
-        scores = cross_val_score(self.model, X, y,
-                                 scoring='neg_mean_absolute_error',
-                                 cv=KFold(n_splits=5, shuffle=True, random_state=1),
-                                 n_jobs=-1)
         scores_test = self.model.score(X_test, y_test)
-        res = mean(absolute(scores))
+        logging.info(f'Model has been trained, score = {scores_test:.4f}')
 
         train_file = f'{out_dir}/plots/train_{file_suffix}_{model_name}.png'
         test_file = f'{out_dir}/plots/test_{file_suffix}_{model_name}.png'
@@ -180,7 +196,7 @@ class Model:
         self.predict_plot(X_train, y_train, f'Training data', train_file, models_config)
         self.predict_plot(X_test, y_test, f'Testing data', test_file, models_config)
 
-        return res, scores_test
+        return scores_test
 
     def visualize_data(self, species_map: Dict[str, dict], seqs_filter: str, out_directory: str):
         """Visualize species vectors.
@@ -211,15 +227,6 @@ class Model:
         sorted_df = sorted_df[[col[0] for col in columns_density]]
 
         sorted_df.drop(columns_to_drop, axis='columns', inplace=True)
-        # self.clusters = [cluster for cluster in self.clusters if cluster not in columns_to_drop]
-
-        # sort by hits
-        # spec_genes = []
-        # for idx, row in sorted_df.iterrows():
-        #     spec_genes.append(row.drop('longevity').sum())
-        #
-        # sorted_df.insert(0, 'genes', spec_genes)
-        # sorted_df = sorted_df.sort_values(by='genes')
 
         # remove longevity and genes columns
         columns_to_drop = ['longevity']
@@ -244,10 +251,6 @@ class Model:
 
         import seaborn as sns
         sns.set(rc={'figure.figsize': (16, 8)})
-        # fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-        # sns.heatmap(phylo_df, ax=axes[0])
-        # cax = sns.clustermap(sorted_df, ax=axes[1])
-        # fig.savefig('rf.png', dpi=600)
 
         sorted_df.insert(0, 'phylo', sp_idx_map)
 
@@ -260,11 +263,6 @@ class Model:
         sorted_df.sort_values(['phylo', 'longevity'], inplace=True)
 
         row_colors = sorted_df.phylo.map(network_lut)
-
-        # sorted_df.index = [
-        #     longevity[idx]
-        #     for idx in sorted_df.index
-        # ]
 
         columns_to_drop = ['phylo', 'longevity']
         sorted_df.drop(columns_to_drop, axis='columns', inplace=True)
@@ -308,13 +306,15 @@ class Model:
             }
             # annotate proper points on scatter plot
             for i, idx in enumerate(_x.index):
-                plt.annotate(sp_map[idx], (_y[i], y_pred[i]))
+                if abs(_y[i] - y_pred[i]) > models_config.plots_annotate_threshold:
+                    plt.annotate(sp_map[idx], (_y[i], y_pred[i]))
 
         plt.scatter(_y, y_pred, c=phylo_colors)
         plt.ylabel('Predicted Lifespan (ln)')
         plt.xlabel('Known Lifespan (ln)')
-        plt.title(
-            f'{title}, R2 = {self.model.score(_x, _y):.2f}, p-value < {Model.get_pval(_y, y_pred):.2e}, coefs = {len(self.get_coefs())}')
+        plt.title(f'{title}, R2 = {self.model.score(_x, _y):.2f}, '
+                  f'p-value < {Model.get_pval(_y, y_pred):.2e}, '
+                  f'coefs = {len(self.get_coefs())}')
 
         # regression line
         coef = np.polyfit(np.array(_y), np.array(y_pred), 1)
@@ -376,7 +376,7 @@ class Model:
     def get_pval(x_values, y_values):
         # stat, pval_res = stats.ttest_ind(x_values, y_values)
         coeff, pval = pearsonr(x_values, y_values)
-        print(f'{coeff} {pval}')
+        logging.info(f'coeff = {coeff:.4f}, p-value = {pval:.2e}')
         return pval
 
     @staticmethod
@@ -487,6 +487,23 @@ class RF(Model):
 class EN(Model):
     def train_model(self, X_train, y_train, params):
         self.model = ElasticNet(**params, max_iter=10000)
+
+        # Train the model using the training sets
+        self.model.fit(X_train, y_train)
+
+    def save_model(self, model_file: str):
+        compress_pickle.dump(self.model, model_file)
+
+    def load_model(self, model_file: str):
+        self.model = compress_pickle.load(model_file)
+
+    def get_ext(self):
+        return '.gz'
+
+
+class ENCV(Model):
+    def train_model(self, X_train, y_train, params):
+        self.model = ElasticNetCV(**params, max_iter=10000, n_jobs=-1)
 
         # Train the model using the training sets
         self.model.fit(X_train, y_train)
