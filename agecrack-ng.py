@@ -7,14 +7,14 @@ from typing import Dict, Type
 
 import numpy as np
 
-from anage import AnAgeDatabase, AnAgeEntry
-from mmseq import run_mmseqs_pipeline, MmseqConfig
-from models import Model, RF, EN, ANN, ModelsConfig, ENCV
-from ncbi import NCBIDatabase
-from prot_encode import ESM
-from uniprot import download_proteomes_by_names
-from utils import (extract_proteins, save_records, count_records, load_and_add_results, plot_ontology_stats,
-                   map_clusters_to_descs, map_ids_to_descs, )
+from src.anage import AnAgeDatabase, AnAgeEntry
+from src.mmseq import run_mmseqs_pipeline, MmseqConfig
+from src.models import Model, RF, EN, ANN, ModelsConfig, ENCV
+from src.ncbi import NCBIDatabase
+from src.prot_encode import ESM
+from src.uniprot import download_proteomes_by_names
+from src.utils import (extract_proteins, save_records, count_records, load_and_add_results, plot_ontology_stats,
+                       map_clusters_to_descs, map_ids_to_descs, )
 
 DIR_DATA = 'data'
 DIR_RESULTS = 'results'
@@ -168,8 +168,9 @@ def analysis_check_rf(records_file: str,
                          f'proteins from {len(species_map)} species\n'
                          f'RF parameters: n estimators = {estimators}, max depth = {depth}')
             current_results.append({
-                'results': results,
-                'rf_params': rf_params
+                'model': 'RandomForest',
+                'model_params': rf_params,
+                'results': results
             })
 
     load_and_add_results(f'{out_directory}/check.json', current_results)
@@ -211,8 +212,9 @@ def analysis_check_en(records_file: str,
                          f'proteins from {len(species_map)} species\n'
                          f'Model parameters: {str(params)}')
             current_results.append({
-                'results': results,
-                'params': params
+                'model': 'ElasticNet',
+                'model_params': params,
+                'results': results
             })
 
     load_and_add_results(f'{out_directory}/check.json', current_results)
@@ -249,8 +251,9 @@ def analysis_check_encv(records_file: str,
                  f'proteins from {len(species_map)} species\n'
                  f'Model parameters: {str(params)}')
     current_results.append({
-        'results': results,
-        'params': params
+        'model': 'ElasticNetCV',
+        'model_params': params,
+        'results': results
     })
 
     load_and_add_results(f'{out_directory}/check.json', current_results)
@@ -277,12 +280,14 @@ def analysis_check_ann(records_file: str,
 def mmseq_check(records_file: str,
                 species_map: Dict[str, dict],
                 out_directory: str,
+                ontology_file: str,
                 min_param: float = 0.1,
                 max_param: float = 0.9,
                 step: float = 0.1):
     """Cluster sequences using multiple parameters combinations."""
     current_results = []
     mmseq_config = MmseqConfig(f'{out_directory}/clusters.json')
+    models_config = ModelsConfig()
 
     if not Path(p := f'{out_directory}/check_mmseqs.json').exists():
         # coverage mode is an int: 0, 1 or 2
@@ -292,7 +297,8 @@ def mmseq_check(records_file: str,
                 mmseq_config.min_seq_id = min_seq_id
                 for c in np.arange(min_param, max_param, step):
                     mmseq_config.c = c
-                    r = run_analysis(records_file, ex_dir, species_map, {}, '', mmseq_config)
+                    r = run_analysis(records_file, ex_dir, species_map, {}, '', ontology_file, mmseq_config,
+                                     models_config)
                     current_results.append(r)
                 with open(p, 'w') as f:
                     json.dump(current_results, f, indent=4)
@@ -519,7 +525,7 @@ if __name__ == '__main__':
 
         # using mmseq_check, parameters were estimated: 0.8, 0.8, 0
         if args.mode in ['mmseqs-estimation']:
-            mmseq_check(seqs_file, sp_map, ex_dir)
+            mmseq_check(seqs_file, sp_map, ex_dir, ontology_file)
 
         if args.mode in ['full', 'ontology']:
             plot_ontology_stats(f'{ex_dir}/ontology', ontology_file, f'{ex_dir}/analysis.json',

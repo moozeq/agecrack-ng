@@ -1,6 +1,8 @@
 import json
 import logging
+import timeit
 from collections import defaultdict, Counter
+from functools import wraps
 from pathlib import Path
 from typing import List, Dict
 
@@ -189,3 +191,16 @@ def extract_proteins(filenames: List[str],
 
     logging.info(f'Loaded {len(records)} {extract_filter} proteins data for {len(species)} species')
     return records, genes_mapping
+
+
+def timing(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        logging.info(f'Executing "{f.__name__}"...')
+        start = timeit.default_timer()
+        result = f(*args, **kwargs)
+        end = timeit.default_timer()
+        logging.info(f'Finished calculation, elapsed time = {end - start:.2f}')
+        return result
+
+    return wrapper

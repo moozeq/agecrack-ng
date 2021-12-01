@@ -6,7 +6,7 @@ import esm
 import torch
 from compress_pickle import compress_pickle
 
-from utils import get_name_from_filename, load_records, normalize_species
+from src.utils import get_name_from_filename, load_records, normalize_species
 
 # Load ESM-1b model
 MODEL, ALPHABET = esm.pretrained.esm1b_t33_650M_UR50S()

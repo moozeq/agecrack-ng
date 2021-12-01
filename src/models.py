@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+from abc import abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
@@ -20,6 +21,8 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import ElasticNet, ElasticNetCV
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import layers
+
+from src.utils import timing
 
 
 @dataclass
@@ -119,22 +122,31 @@ class Model:
                 results = json.load(f)
         return results
 
+    @abstractmethod
     def train_model(self, X_train: list, y_train: list, params: dict):
         """[Method needs to be overload] Return trained model"""
-        pass
 
+    @abstractmethod
     def save_model(self, model_file: str):
         """[Method needs to be overload] Save trained model"""
-        pass
 
+    @abstractmethod
     def load_model(self, model_file: str):
         """[Method needs to be overload] Load trained model"""
-        pass
 
+    @abstractmethod
+    def get_add_text(self):
+        """[Method needs to be overload] Get model additional info for plot"""
+
+    @abstractmethod
     def get_ext(self):
         """[Method needs to be overload] Get model save/load extension"""
-        pass
 
+    @abstractmethod
+    def get_ontology(self, X_test, y_test) -> dict:
+        """[Method needs to be overload] Get model ontology for selected features"""
+
+    @timing
     def process(self,
                 params: dict,
                 out_dir: str,
@@ -187,9 +199,11 @@ class Model:
 
         train_file = f'{out_dir}/plots/train_{file_suffix}_{model_name}.png'
         test_file = f'{out_dir}/plots/test_{file_suffix}_{model_name}.png'
-        coef_file = f'{out_dir}/ontology/ontology_{file_suffix}_{model_name}.json'
-        with open(coef_file, 'w') as f:
-            json.dump(self.get_ontology(), f, indent=4)
+
+        if ontology := self.get_ontology(X_test, y_test):
+            coef_file = f'{out_dir}/ontology/ontology_{file_suffix}_{model_name}.json'
+            with open(coef_file, 'w') as f:
+                json.dump(ontology, f, indent=4)
 
         # self.predict_plot(X_train, y_train, f'Training data {str(params)}', train_file, show, save)
         # self.predict_plot(X_test, y_test, f'Testing data {str(params)}', test_file, show, save)
@@ -314,7 +328,7 @@ class Model:
         plt.xlabel('Known Lifespan (ln)')
         plt.title(f'{title}, R2 = {self.model.score(_x, _y):.2f}, '
                   f'p-value < {Model.get_pval(_y, y_pred):.2e}, '
-                  f'coefs = {len(self.get_coefs())}')
+                  f'{self.get_add_text()}')
 
         # regression line
         coef = np.polyfit(np.array(_y), np.array(y_pred), 1)
@@ -331,29 +345,6 @@ class Model:
         if models_config.plots_show:
             plt.show()
         plt.clf()
-
-    def get_coefs(self) -> dict:
-        try:
-            coefs = {
-                self.clusters[i]: coef
-                for i, coef in enumerate(self.model.coef_)
-                if coef
-            }
-            return dict(sorted(coefs.items(), key=lambda x: x[1], reverse=True))
-        except Exception:
-            return {}
-
-    def get_ontology(self) -> dict:
-        try:
-            return {
-                cluster: {
-                    'coef': coef,
-                    'desc': self.ontology[cluster]
-                }
-                for cluster, coef in self.get_coefs().items()
-            }
-        except Exception:
-            return {}
 
     @staticmethod
     def get_r2(x_values, y_values):
@@ -422,6 +413,16 @@ class Model:
 
         plt.show()
 
+    @staticmethod
+    def get_features(clusters: dict, model_features: list, threshold: float = 0.0) -> dict:
+        """"""
+        clusters_scores = {
+            clusters[i]: feature_score
+            for i, feature_score in enumerate(model_features)
+            if abs(feature_score) > threshold
+        }
+        return dict(sorted(clusters_scores.items(), key=lambda x: x[1], reverse=True))
+
 
 class ANN(Model):
     def train_model(self, X_train: list, y_train: list, params: dict):
@@ -444,8 +445,14 @@ class ANN(Model):
     def load_model(self, model_file: str):
         self.model = load_model(model_file)
 
+    def get_add_text(self):
+        return f'layers = {len(self.model.layers)}'
+
     def get_ext(self):
         return '.h5'
+
+    def get_ontology(self, X_test, y_test) -> dict:
+        return {}
 
 
 class RF(Model):
@@ -461,8 +468,34 @@ class RF(Model):
     def load_model(self, model_file: str):
         self.model = compress_pickle.load(model_file)
 
+    def get_add_text(self):
+        return f'estimators = {len(self.model.estimators_)}'
+
     def get_ext(self):
         return '.gz'
+
+    def get_ontology(self, X_test, y_test) -> dict:
+        return {
+            cluster: {
+                'coef': coef,
+                'desc': self.ontology[cluster]
+            }
+            for cluster, coef in self.get_features(self.clusters, self.model.feature_importances_).items()
+        }
+
+        # TODO: add plots for ontology for each model
+        # TODO: change coef to score
+        # importances = self.model.feature_importances_
+        # df = pd.DataFrame.from_dict({'importances': list(importances), 'gene': list(self.ontology)})
+        # df = df[df.importances > 0.003].sort_values(by='importances')
+        #
+        # fig, ax = plt.subplots()
+        # df.plot.bar(x='gene', y='importances', ax=ax)
+        # ax.set_title("Feature importances using MDI")
+        # ax.set_ylabel("Mean decrease in impurity")
+        # fig.tight_layout()
+        # plt.show()
+        # return {}
 
     def visualize_tree(self):
         """Visualize random forest tree estimator"""
@@ -497,8 +530,20 @@ class EN(Model):
     def load_model(self, model_file: str):
         self.model = compress_pickle.load(model_file)
 
+    def get_add_text(self):
+        return f'coefs = {len(self.model.coef_)}'
+
     def get_ext(self):
         return '.gz'
+
+    def get_ontology(self, X_test, y_test) -> dict:
+        return {
+            cluster: {
+                'coef': coef,
+                'desc': self.ontology[cluster]
+            }
+            for cluster, coef in self.get_features(self.clusters, self.model.coef_).items()
+        }
 
 
 class ENCV(Model):
@@ -514,5 +559,17 @@ class ENCV(Model):
     def load_model(self, model_file: str):
         self.model = compress_pickle.load(model_file)
 
+    def get_add_text(self):
+        return f'coefs = {len(self.model.coef_)}'
+
     def get_ext(self):
         return '.gz'
+
+    def get_ontology(self, X_test, y_test) -> dict:
+        return {
+            cluster: {
+                'coef': coef,
+                'desc': self.ontology[cluster]
+            }
+            for cluster, coef in self.get_features(self.clusters, self.model.coef_).items()
+        }

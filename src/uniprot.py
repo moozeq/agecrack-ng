@@ -5,7 +5,7 @@ from typing import List
 
 import requests
 
-from utils import normalize_species
+from src.utils import normalize_species
 
 
 class Uniprot:
