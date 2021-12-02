@@ -21,7 +21,8 @@ from sklearn.model_selection import train_test_split
 
 from src.anage import AnAgeDatabase
 from src.mmseq import MmseqConfig, run_mmseqs_pipeline
-from src.utils import (timing, load_and_add_results, map_ids_to_descs, map_clusters_to_descs_with_counts, )
+from src.ontology import map_ids_to_descs, map_clusters_to_descs_with_counts
+from src.utils import timing, load_and_add_results
 
 
 @dataclass
@@ -105,7 +106,7 @@ class Model:
 
     @classmethod
     def from_file(cls, results_filename: str, species_map: Dict[str, dict], class_filter: str, ontology_file: str):
-        logging.info(f'Creating {cls.__name__} data object from: {results_filename}')
+        logging.info(f'Creating {cls.__name__} data object from file: {results_filename}')
         results = cls.read_results_file(results_filename)
         return cls(results, species_map, class_filter, ontology_file)
 
@@ -259,8 +260,10 @@ class Model:
         X: DataFrame = self.data[self.clusters]  # Features
         y: DataFrame = np.log(self.data['longevity'])  # Longevity in ln(years)
 
-        # split dataset into training set and test set
+        params_str = ', '.join(f'{param} = {value}' for param, value in params.items())
+        logging.info(f'Processing {model_name} model with parameters: {params_str}')
 
+        # split dataset into training set and test set
         # stratify dataset if specified in config
         if models_config.stratify:
             bins_count = len(y) // 2 if not models_config.bins else models_config.bins
@@ -287,7 +290,9 @@ class Model:
         scores_test = self.model.score(X_test, y_test)
         y_pred = self.model.predict(X_test)
         logging.critical(f'Model has been trained, '
-                         f'score = {scores_test:.2f}, p-value < {Model.get_pval(y_test, y_pred):.2e}')
+                         f'score = {scores_test:.2f}, '
+                         f'p-value < {Model.get_pval(y_test, y_pred):.2e}, '
+                         f'{self.get_add_text()}')
 
         # predictor efficiency plots
         train_plot_file = f'{out_dir}/plots/train_{file_suffix}_{model_name}.png'
@@ -404,6 +409,8 @@ class Model:
             plt.savefig(file)
         if models_config.plots_show:
             plt.show()
+        ax.clear()
+        plt.cla()
         plt.clf()
 
     @staticmethod
@@ -456,6 +463,8 @@ class Model:
             plt.savefig(file)
         if models_config.plots_show:
             plt.show()
+        plt.close()
+        plt.cla()
         plt.clf()
 
     @staticmethod

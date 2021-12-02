@@ -8,9 +8,10 @@ from src.logger import load_logger
 from src.mmseq import MmseqConfig, mmseq_check
 from src.models import Model, RF, EN, ModelsConfig, ENCV
 from src.ncbi import NCBIDatabase
+from src.ontology import OntologyConfig, ontology_scores
 from src.prot_encode import ESM
 from src.uniprot import download_proteomes_by_names
-from src.utils import (extract_proteins, save_records, count_records, plot_ontology_stats)
+from src.utils import extract_proteins, save_records, count_records
 
 DIR_DATA = 'data'
 DIR_RESULTS = 'results'
@@ -103,6 +104,18 @@ def load_models_config(models_reuse: bool,
     return models_config
 
 
+def load_ontology_config(ontology_dir: str,
+                         ontology_file: str,
+                         out_file: str,
+                         out_plot_file: str) -> OntologyConfig:
+    # create and update ``OntologyConfig``
+    ontology_config = OntologyConfig(ontology_dir,
+                                     ontology_file,
+                                     out_file,
+                                     out_plot_file)
+    return ontology_config
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description=AGECRACK_NG_DESCRIPTION,
@@ -110,10 +123,11 @@ if __name__ == '__main__':
     )
     parser.add_argument('--mode',
                         type=str, default='predictor',
-                        choices=['predictor', 'ontology', 'vectors', 'mmseqs-estimation'],
+                        choices=['predictor', 'ontology', 'ontology-parse', 'vectors', 'mmseqs-estimation'],
                         help='Select mode for running the program, '
                              '"predictor" gives single best predictor for longevity based on predefined parameters, '
                              '"ontology" runs analysis for clusters ontology and correlation with longevity, '
+                             '"ontology-parse" parses files obtained in ontology analysis, '
                              '"vectors" produces additional visualization of species genes vectors, '
                              '"mmseqs-estimation" produces additional plots for mmseqs params estimation')
     parser.add_argument('--model',
@@ -198,6 +212,9 @@ if __name__ == '__main__':
         map_file = f'{ex_dir}/mapping.json'
         cluster_file = f'{ex_dir}/clusters.json'
         ontology_file = f'{ex_dir}/ontology.json'
+        ontology_dir = f'{ex_dir}/ontology'
+        ontology_result = f'{ex_dir}/analysis.json'
+        ontology_plot = f'{ex_dir}/analysis.png'
 
         # download and load AnAge database
         anage_db = None
@@ -244,6 +261,7 @@ if __name__ == '__main__':
 
         grid_params = load_grid_params(args.mode, args.model)
         mmseq_config = load_mmseq_config(cluster_file, args.reload, args.mmseq_force, args.mmseq_threshold)
+        ontology_config = load_ontology_config(ontology_dir, ontology_file, ontology_result, ontology_plot)
         models_config = load_models_config(args.models_reuse,
                                            args.models_plots_show,
                                            args.models_plots_annotate,
@@ -254,24 +272,25 @@ if __name__ == '__main__':
                                            args.models_stratify)
 
         # run static method from selected model class
-        models = {
-            'rf': RF,
-            'encv': ENCV,
-            'en': EN
-        }
-        selected_model: Model = models[args.model]
-        selected_model.analysis_check(
-            seqs_file,
-            sp_map,
-            args.filter_class,
-            records_count,
-            grid_params,
-            ontology_file,
-            mmseq_config,
-            models_config,
-            anage_db,
-            ex_dir
-        )
+        if args.mode in ['predictor', 'ontology', 'vectors', 'mmseqs-estimation']:
+            models = {
+                'rf': RF,
+                'encv': ENCV,
+                'en': EN
+            }
+            selected_model: Model = models[args.model]
+            selected_model.analysis_check(
+                seqs_file,
+                sp_map,
+                args.filter_class,
+                records_count,
+                grid_params,
+                ontology_file,
+                mmseq_config,
+                models_config,
+                anage_db,
+                ex_dir
+            )
 
         # plot vectors using ``results.json`` from mmseq
         if args.mode in ['vectors']:
@@ -282,8 +301,5 @@ if __name__ == '__main__':
         if args.mode in ['mmseqs-estimation']:
             mmseq_check(seqs_file, sp_map, ex_dir, ontology_file)
 
-        if args.mode in ['ontology']:
-            plot_ontology_stats(f'{ex_dir}/ontology',
-                                ontology_file,
-                                f'{ex_dir}/analysis.json',
-                                f'{ex_dir}/analysis.png')
+        if args.mode in ['ontology', 'ontology-parse']:
+            ontology_scores(ontology_config)
