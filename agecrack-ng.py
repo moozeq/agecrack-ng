@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import logging
 from pathlib import Path
-from typing import Dict, Type
-
-import numpy as np
 
 from src.anage import AnAgeDatabase, AnAgeEntry
-from src.mmseq import run_mmseqs_pipeline, MmseqConfig
+from src.logger import load_logger
+from src.mmseq import MmseqConfig, mmseq_check
 from src.models import Model, RF, EN, ModelsConfig, ENCV
 from src.ncbi import NCBIDatabase
 from src.prot_encode import ESM
 from src.uniprot import download_proteomes_by_names
-from src.utils import (extract_proteins, save_records, count_records, load_and_add_results, plot_ontology_stats,
-                       map_clusters_to_descs, map_ids_to_descs, )
+from src.utils import (extract_proteins, save_records, count_records, plot_ontology_stats)
 
 DIR_DATA = 'data'
 DIR_RESULTS = 'results'
@@ -36,18 +32,6 @@ Tool for searching and extracting age-related features from data.
 """
 
 
-def load_logger(verbosity: int):
-    try:
-        log_level = {
-            0: logging.ERROR,
-            1: logging.WARN,
-            2: logging.INFO}[verbosity]
-    except KeyError:
-        log_level = logging.DEBUG
-    logging.basicConfig(level=log_level)
-    logging.getLogger().setLevel(log_level)
-
-
 def create_dirs_structure():
     Path(f'{DIR_DATA}/proteomes').mkdir(parents=True, exist_ok=True)
     Path(f'{DIR_RESULTS}').mkdir(parents=True, exist_ok=True)
@@ -65,235 +49,9 @@ def load_esm_model() -> ESM:
     return ESM()
 
 
-def run_analysis(records_file: str,
-                 out_directory: str,
-                 species_map: Dict[str, dict],
-                 params: dict,
-                 class_filter: str,
-                 ontology_file: str,
-                 mmseq_config: MmseqConfig,
-                 models_config: ModelsConfig,
-                 anage_db: AnAgeDatabase = None,
-                 model: Type[Model] = EN,
-                 results_dict: dict = None):
-    """
-    Run full analysis of extracted proteins:
-        1. Cluster sequences with provided parameters
-        2. For each species create vector with counts of genes in each cluster
-        3. Run ``Regressor`` to find predictor
-    """
-    # if all conditions for new run are met, do it and save results to ``results_file``
-    if (
-            not Path(results_file := f'{out_directory}/results.json').exists()
-            or mmseq_config.force_new_mmseqs
-            or mmseq_config.reload_mmseqs
-    ):
-        vectors, clusters = run_mmseqs_pipeline(
-            records_file,
-            species_map,
-            mmseq_config,
-            out_directory
-        )
-
-        final_data = {
-            'clusters': clusters,
-            'species': {
-                species: {
-                    'longevity': anage_db.get_longevity(species),
-                    'vec': vectors[species]
-                }
-                for species in vectors
-            }
-        }
-        with open(results_file, 'w') as f:
-            json.dump(final_data, f, indent=4)
-
-    if not Path(ontology_file).exists() or mmseq_config.force_new_mmseqs or mmseq_config.reload_mmseqs:
-        genes_to_descs = map_ids_to_descs(records_file)
-        cls_to_descs = map_clusters_to_descs(mmseq_config.clusters_file, genes_to_descs)
-        with open(ontology_file, 'w') as f:
-            json.dump(cls_to_descs, f)
-
-    if results_dict:
-        m = model.from_dict(results_dict, species_map, class_filter, ontology_file)
-    else:
-        m = model.from_file(results_file, species_map, class_filter, ontology_file)
-
-    score = m.process(params, out_directory, models_config)
-
-    m_results = {
-        'params': [mmseq_config.min_seq_id, mmseq_config.c, mmseq_config.cov_mode],
-        'score': score
-    }
-    logging.info(f'Model params: ({mmseq_config.min_seq_id}, {mmseq_config.c}, {mmseq_config.cov_mode}) '
-                 f'Model score: {score:.2f}')
-    return m_results, m
-
-
-def analysis_check_rf(records_file: str,
-                      species_map: Dict[str, dict],
-                      class_filter: str,
-                      proteins_count: str,
-                      grid_params: dict,
-                      ontology_file: str,
-                      mmseq_config: MmseqConfig,
-                      models_config: ModelsConfig,
-                      anage_db: AnAgeDatabase,
-                      out_directory: str):
-    """Do Random Forest Regressor analysis for multiple parameters combinations."""
-    current_results = []
-
-    # read model from file to get it into memory, speeding up multiple calls
-    results_dict = Model.read_results_file(res) if Path(res := f'{out_directory}/results.json').exists() else {}
-
-    for estimators in grid_params['estimators']:
-        for depth in grid_params['depth']:
-            rf_params = {
-                'n_estimators': estimators,
-                'max_depth': depth
-            }
-            results, rf = run_analysis(records_file,
-                                       out_directory,
-                                       species_map,
-                                       rf_params,
-                                       class_filter,
-                                       ontology_file,
-                                       mmseq_config,
-                                       models_config,
-                                       anage_db,
-                                       RF,
-                                       results_dict)
-
-            logging.info(f'Analysis done on {proteins_count} '
-                         f'proteins from {len(species_map)} species\n'
-                         f'RF parameters: n estimators = {estimators}, max depth = {depth}')
-            current_results.append({
-                'model': 'RandomForest',
-                'model_params': rf_params,
-                'results': results
-            })
-
-    load_and_add_results(f'{out_directory}/check.json', current_results)
-
-
-def analysis_check_en(records_file: str,
-                      species_map: Dict[str, dict],
-                      class_filter: str,
-                      proteins_count: str,
-                      grid_params: dict,
-                      ontology_file: str,
-                      mmseq_config: MmseqConfig,
-                      models_config: ModelsConfig,
-                      anage_db: AnAgeDatabase,
-                      out_directory: str):
-    """Do Elastic Net Regressor analysis for multiple parameters combinations."""
-
-    current_results = []
-    results_dict = Model.read_results_file(res) if Path(res := f'{out_directory}/results.json').exists() else {}
-    for alpha in grid_params['alpha']:
-        for l1_ratio in grid_params['l1_ratio']:
-            params = {
-                'alpha': alpha,
-                'l1_ratio': l1_ratio
-            }
-            results, en = run_analysis(records_file,
-                                       out_directory,
-                                       species_map,
-                                       params,
-                                       class_filter,
-                                       ontology_file,
-                                       mmseq_config,
-                                       models_config,
-                                       anage_db,
-                                       EN,
-                                       results_dict)
-
-            logging.info(f'Analysis done on {proteins_count} '
-                         f'proteins from {len(species_map)} species\n'
-                         f'Model parameters: {str(params)}')
-            current_results.append({
-                'model': 'ElasticNet',
-                'model_params': params,
-                'results': results
-            })
-
-    load_and_add_results(f'{out_directory}/check.json', current_results)
-
-
-def analysis_check_encv(records_file: str,
-                        species_map: Dict[str, dict],
-                        class_filter: str,
-                        proteins_count: str,
-                        grid_params: dict,
-                        ontology_file: str,
-                        mmseq_config: MmseqConfig,
-                        models_config: ModelsConfig,
-                        anage_db: AnAgeDatabase,
-                        out_directory: str):
-    """Do Elastic Net Regressor with cross validation analysis"""
-
-    current_results = []
-    results_dict = Model.read_results_file(res) if Path(res := f'{out_directory}/results.json').exists() else {}
-    params = grid_params
-    results, encv = run_analysis(records_file,
-                                 out_directory,
-                                 species_map,
-                                 params,
-                                 class_filter,
-                                 ontology_file,
-                                 mmseq_config,
-                                 models_config,
-                                 anage_db,
-                                 ENCV,
-                                 results_dict)
-
-    logging.info(f'Analysis done on {proteins_count} '
-                 f'proteins from {len(species_map)} species\n'
-                 f'Model parameters: {str(params)}')
-    current_results.append({
-        'model': 'ElasticNetCV',
-        'model_params': params,
-        'results': results
-    })
-
-    load_and_add_results(f'{out_directory}/check.json', current_results)
-
-
-def mmseq_check(records_file: str,
-                species_map: Dict[str, dict],
-                out_directory: str,
-                ontology_file: str,
-                min_param: float = 0.1,
-                max_param: float = 0.9,
-                step: float = 0.1):
-    """Cluster sequences using multiple parameters combinations."""
-    current_results = []
-    mmseq_config = MmseqConfig(f'{out_directory}/clusters.json')
-    models_config = ModelsConfig()
-
-    if not Path(p := f'{out_directory}/check_mmseqs.json').exists():
-        # coverage mode is an int: 0, 1 or 2
-        for cov_mode in range(3):
-            mmseq_config.cov_mode = cov_mode
-            for min_seq_id in np.arange(min_param, max_param, step):
-                mmseq_config.min_seq_id = min_seq_id
-                for c in np.arange(min_param, max_param, step):
-                    mmseq_config.c = c
-                    r = run_analysis(records_file, ex_dir, species_map, {}, '', ontology_file, mmseq_config,
-                                     models_config)
-                    current_results.append(r)
-                with open(p, 'w') as f:
-                    json.dump(current_results, f, indent=4)
-
-    all_results = load_and_add_results(f'{out_directory}/check_mmseqs.json', current_results)
-
-    Model.scatter3d(all_results, scores=0)
-    Model.scatter3d(all_results)
-
-
-def load_grid_params(mode: str, model: str):
+def load_grid_params(mode: str, model: str) -> dict:
     # for full/ontology analysis do multiple parameters from file
-    if mode in ['full', 'ontology']:
+    if mode in ['ontology']:
         with open('grid_params.json') as f:
             predef_grid_params = json.load(f)
     # best estimated parameters for predictors,
@@ -315,12 +73,15 @@ def load_grid_params(mode: str, model: str):
     return predef_grid_params[model]
 
 
-def load_mmseq_config(cluster_file: str, reload: bool, mmseq_force: bool, mmseq_threshold: int):
+def load_mmseq_config(cluster_file: str,
+                      reload: bool,
+                      mmseq_force: bool,
+                      mmseq_threshold: int) -> MmseqConfig:
     # create and update ``MmseqConfig``
-    mmseq_config = MmseqConfig(cluster_file)
-    mmseq_config.reload_mmseqs = reload
-    mmseq_config.force_new_mmseqs = mmseq_force
-    mmseq_config.cluster_count_threshold = mmseq_threshold
+    mmseq_config = MmseqConfig(cluster_file,
+                               reload_mmseqs=reload,
+                               force_new_mmseqs=mmseq_force,
+                               cluster_count_threshold=mmseq_threshold)
     return mmseq_config
 
 
@@ -328,10 +89,17 @@ def load_models_config(models_reuse: bool,
                        plots_show: bool,
                        plots_annotate: bool,
                        plots_annotate_threshold: float,
+                       plots_clusters_count: int,
                        rand: int,
-                       bins: int):
+                       bins: int,
+                       stratify: bool) -> ModelsConfig:
     # create and update ``PlotsConfig``
-    models_config = ModelsConfig(models_reuse, plots_show, plots_annotate, plots_annotate_threshold, rand, bins)
+    models_config = ModelsConfig(models_reuse,
+                                 plots_show,
+                                 plots_annotate,
+                                 plots_annotate_threshold,
+                                 plots_clusters_count,
+                                 rand, bins, stratify)
     return models_config
 
 
@@ -342,13 +110,12 @@ if __name__ == '__main__':
     )
     parser.add_argument('--mode',
                         type=str, default='predictor',
-                        choices=['full', 'predictor', 'ontology', 'vectors', 'mmseqs-estimation'],
+                        choices=['predictor', 'ontology', 'vectors', 'mmseqs-estimation'],
                         help='Select mode for running the program, '
                              '"predictor" gives single best predictor for longevity based on predefined parameters, '
-                             '"ontology" runs full analysis for clusters ontology and correlation with longevity, '
+                             '"ontology" runs analysis for clusters ontology and correlation with longevity, '
                              '"vectors" produces additional visualization of species genes vectors, '
-                             '"mmseqs-estimation" produces additional plots for mmseqs params estimation, '
-                             '"full" runs whole ontology and vectors analysis')
+                             '"mmseqs-estimation" produces additional plots for mmseqs params estimation')
     parser.add_argument('--model',
                         type=str, default='encv', choices=['rf', 'encv', 'en'],
                         help='ML model')
@@ -387,6 +154,12 @@ if __name__ == '__main__':
     parser.add_argument('--models-rand',
                         type=int, default=1,
                         help='Random state for splitting data for training and testing')
+    parser.add_argument('--models-stratify',
+                        action='store_true', dest='models_stratify',
+                        help='If false, dataset will be stratified using bins')
+    parser.add_argument('--models-no-stratify',
+                        action='store_false', dest='models_stratify',
+                        help='If specified, dataset will NOT be stratified')
     parser.add_argument('--models-bins',
                         type=int, default=0,
                         help='How many bins for stratifying data, if not specified - number of species divided by 2')
@@ -399,6 +172,9 @@ if __name__ == '__main__':
     parser.add_argument('--models-plots-annotate-threshold',
                         type=float, default=0.5,
                         help='Difference between predicted and known lifespan that should be annotated')
+    parser.add_argument('--models-plots-clusters-count',
+                        type=int, default=30,
+                        help='Up to how many most important clusters should be shown on an ontology plot')
     parser.add_argument('--mmseq-threshold',
                         type=int, default=0,
                         help='Clusters under strength of this threshold will be filter out')
@@ -415,13 +191,6 @@ if __name__ == '__main__':
 
     load_logger(args.verbose)
     create_dirs_structure()
-
-    """
-    Ideas:
-        - [ ] filter proteomes under 1k proteins
-        - [ ] PCA
-        - [ ] classifier for taxons based on vectors
-    """
 
     for extract_filter in args.filters:
         ex_dir = f'{DIR_RESULTS}/{extract_filter}' if extract_filter else f'{DIR_RESULTS}/_nofilter'
@@ -473,19 +242,25 @@ if __name__ == '__main__':
         # count proteins if specified (impact performance)
         records_count = count_records(seqs_file) if args.count_proteins else '- (counting skipped)'
 
-        analysis_funcs = {
-            'rf': analysis_check_rf,
-            'encv': analysis_check_encv,
-            'en': analysis_check_en
-        }
-
         grid_params = load_grid_params(args.mode, args.model)
         mmseq_config = load_mmseq_config(cluster_file, args.reload, args.mmseq_force, args.mmseq_threshold)
-        models_config = load_models_config(args.models_reuse, args.models_plots_show, args.models_plots_annotate,
-                                           args.models_plots_annotate_threshold, args.models_rand, args.models_bins)
+        models_config = load_models_config(args.models_reuse,
+                                           args.models_plots_show,
+                                           args.models_plots_annotate,
+                                           args.models_plots_annotate_threshold,
+                                           args.models_plots_clusters_count,
+                                           args.models_rand,
+                                           args.models_bins,
+                                           args.models_stratify)
 
-        # run proper function based on selected model
-        analysis_funcs[args.model](
+        # run static method from selected model class
+        models = {
+            'rf': RF,
+            'encv': ENCV,
+            'en': EN
+        }
+        selected_model: Model = models[args.model]
+        selected_model.analysis_check(
             seqs_file,
             sp_map,
             args.filter_class,
@@ -499,7 +274,7 @@ if __name__ == '__main__':
         )
 
         # plot vectors using ``results.json`` from mmseq
-        if args.mode in ['full', 'vectors']:
+        if args.mode in ['vectors']:
             model = Model.from_file(f'{ex_dir}/results.json', sp_map, args.filter_class, ontology_file)
             model.visualize_data(sp_map, extract_filter, ex_dir)
 
@@ -507,6 +282,8 @@ if __name__ == '__main__':
         if args.mode in ['mmseqs-estimation']:
             mmseq_check(seqs_file, sp_map, ex_dir, ontology_file)
 
-        if args.mode in ['full', 'ontology']:
-            plot_ontology_stats(f'{ex_dir}/ontology', ontology_file, f'{ex_dir}/analysis.json',
+        if args.mode in ['ontology']:
+            plot_ontology_stats(f'{ex_dir}/ontology',
+                                ontology_file,
+                                f'{ex_dir}/analysis.json',
                                 f'{ex_dir}/analysis.png')

@@ -81,6 +81,19 @@ def map_clusters_to_descs(cluster_file: str, genes_to_descs: dict) -> dict:
         }
 
 
+def map_clusters_to_descs_with_counts(cluster_file: str, genes_to_descs: dict) -> dict:
+    with open(cluster_file) as f:
+        clusters = json.load(f)
+        return {
+            cluster: dict(Counter([
+                genes_to_descs[seq]
+                for seq in seqs
+                if seq in genes_to_descs
+            ]).most_common())
+            for cluster, seqs in clusters.items()
+        }
+
+
 def plot_ontology_stats(ontology_dir: str, ontology_file: str, out_file: str, out_plot_file: str):
     with open(ontology_file) as fo:
         onto_dict = json.load(fo)
@@ -196,11 +209,11 @@ def extract_proteins(filenames: List[str],
 def timing(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        logging.info(f'Executing "{f.__name__}"...')
+        logging.info(f'[TIMING] Executing "{f.__name__}"...')
         start = timeit.default_timer()
         result = f(*args, **kwargs)
         end = timeit.default_timer()
-        logging.info(f'Finished calculation, elapsed time = {end - start:.2f}')
+        logging.info(f'[TIMING] Finished calculation, elapsed time = {end - start:.2f} seconds')
         return result
 
     return wrapper

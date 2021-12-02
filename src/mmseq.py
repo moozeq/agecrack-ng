@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict
 
+import numpy as np
+
+from src.utils import load_and_add_results
+
 
 @dataclass
 class MmseqConfig:
@@ -94,6 +98,42 @@ def _get_species_clusters_vector(species_genes_ids: List[str], clusters: dict) -
         count = count_genes_in_cluster(genes_ids, cluster_seqs_ids)
         vector.append(count)
     return vector
+
+
+def mmseq_check(records_file: str,
+                species_map: Dict[str, dict],
+                out_directory: str,
+                ontology_file: str,
+                min_param: float = 0.1,
+                max_param: float = 0.9,
+                step: float = 0.1):
+    """Cluster sequences using multiple parameters combinations."""
+    from src.models import Model, ModelsConfig, EN
+    current_results = []
+    mmseq_config = MmseqConfig(f'{out_directory}/clusters.json')
+    models_config = ModelsConfig()
+
+    if not Path(p := f'{out_directory}/check_mmseqs.json').exists():
+        # coverage mode is an int: 0, 1 or 2
+        for cov_mode in range(3):
+            mmseq_config.cov_mode = cov_mode
+            for min_seq_id in np.arange(min_param, max_param, step):
+                mmseq_config.min_seq_id = min_seq_id
+                for c in np.arange(min_param, max_param, step):
+                    mmseq_config.c = c
+                    r = Model.run_analysis(records_file,
+                                           out_directory,
+                                           species_map, {}, '',
+                                           ontology_file, mmseq_config,
+                                           models_config, None, EN, {})
+                    current_results.append(r)
+                with open(p, 'w') as f:
+                    json.dump(current_results, f, indent=4)
+
+    all_results = load_and_add_results(f'{out_directory}/check_mmseqs.json', current_results)
+
+    Model.scatter3d(all_results, scores=0)
+    Model.scatter3d(all_results)
 
 
 def run_mmseqs_pipeline(records_file: str,
