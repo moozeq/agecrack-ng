@@ -9,7 +9,7 @@ import numpy as np
 
 from src.anage import AnAgeDatabase, AnAgeEntry
 from src.mmseq import run_mmseqs_pipeline, MmseqConfig
-from src.models import Model, RF, EN, ANN, ModelsConfig, ENCV
+from src.models import Model, RF, EN, ModelsConfig, ENCV
 from src.ncbi import NCBIDatabase
 from src.prot_encode import ESM
 from src.uniprot import download_proteomes_by_names
@@ -259,24 +259,6 @@ def analysis_check_encv(records_file: str,
     load_and_add_results(f'{out_directory}/check.json', current_results)
 
 
-def analysis_check_ann(records_file: str,
-                       species_map: Dict[str, dict],
-                       class_filter: str,
-                       proteins_count: str,
-                       grid_params: dict,
-                       ontology_file: str,
-                       mmseq_config: MmseqConfig,
-                       models_config: ModelsConfig,
-                       anage_db: AnAgeDatabase,
-                       out_directory: str):
-    """Do Neural Network Regressor analysis for multiple parameters combinations. Currently not in use."""
-    results, ann = run_analysis(records_file, out_directory, species_map, {}, class_filter, ontology_file, mmseq_config,
-                                models_config, anage_db, ANN)
-
-    logging.info(f'Analysis done on {proteins_count} '
-                 f'proteins from {len(species_map)} species')
-
-
 def mmseq_check(records_file: str,
                 species_map: Dict[str, dict],
                 out_directory: str,
@@ -328,8 +310,7 @@ def load_grid_params(mode: str, model: str):
             },
             'encv': {
                 'l1_ratio': [0.1, 0.5, 0.7, 0.9, 0.95, 0.99, 1.0]
-            },
-            'ann': {}
+            }
         }
     return predef_grid_params[model]
 
@@ -369,7 +350,7 @@ if __name__ == '__main__':
                              '"mmseqs-estimation" produces additional plots for mmseqs params estimation, '
                              '"full" runs whole ontology and vectors analysis')
     parser.add_argument('--model',
-                        type=str, default='encv', choices=['rf', 'encv', 'en', 'ann'],
+                        type=str, default='encv', choices=['rf', 'encv', 'en'],
                         help='ML model')
     parser.add_argument('--filters',
                         nargs='+', default=[''],
@@ -495,8 +476,7 @@ if __name__ == '__main__':
         analysis_funcs = {
             'rf': analysis_check_rf,
             'encv': analysis_check_encv,
-            'en': analysis_check_en,
-            'ann': analysis_check_ann
+            'en': analysis_check_en
         }
 
         grid_params = load_grid_params(args.mode, args.model)

@@ -11,8 +11,6 @@ import matplotlib.cm as cm
 import numpy as np
 import pandas as pd
 from compress_pickle import compress_pickle
-from keras import Sequential
-from keras.models import load_model
 from matplotlib import pyplot as plt
 from numpy import ndarray
 from pandas import DataFrame
@@ -20,7 +18,6 @@ from scipy.stats import pearsonr
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import ElasticNet, ElasticNetCV
 from sklearn.model_selection import train_test_split
-from tensorflow.keras import layers
 
 from src.utils import timing
 
@@ -424,37 +421,6 @@ class Model:
         return dict(sorted(clusters_scores.items(), key=lambda x: x[1], reverse=True))
 
 
-class ANN(Model):
-    def train_model(self, X_train: list, y_train: list, params: dict):
-        # create ANN model
-        self.model = Sequential()
-
-        self.model.add(layers.Conv1D(32, (3, 3), activation='relu', input_shape=(X_train.shape[1], 1, 20)))
-        self.model.add(layers.MaxPooling2D((2, 2)))
-        self.model.add(layers.Conv1D(64, (3, 3), activation='relu'))
-        self.model.add(layers.MaxPooling2D((2, 2)))
-        self.model.add(layers.Conv1D(64, (3, 3), activation='relu'))
-        self.model.add(layers.Dense(1, activation='relu'))
-
-        # Fitting the ANN to the Training set
-        self.model.fit(X_train, y_train, batch_size=20, epochs=50, verbose=1)
-
-    def save_model(self, model_file: str):
-        self.model.save(model_file)
-
-    def load_model(self, model_file: str):
-        self.model = load_model(model_file)
-
-    def get_add_text(self):
-        return f'layers = {len(self.model.layers)}'
-
-    def get_ext(self):
-        return '.h5'
-
-    def get_ontology(self, X_test, y_test) -> dict:
-        return {}
-
-
 class RF(Model):
     def train_model(self, X_train, y_train, params):
         self.model = RandomForestRegressor(**params, n_jobs=-1)
@@ -531,7 +497,8 @@ class EN(Model):
         self.model = compress_pickle.load(model_file)
 
     def get_add_text(self):
-        return f'coefs = {len(self.model.coef_)}'
+        # show only coefs != 0.0
+        return f'coefs = {np.count_nonzero(self.model.coef_)}'
 
     def get_ext(self):
         return '.gz'
@@ -560,7 +527,8 @@ class ENCV(Model):
         self.model = compress_pickle.load(model_file)
 
     def get_add_text(self):
-        return f'coefs = {len(self.model.coef_)}'
+        # show only coefs != 0.0
+        return f'coefs = {np.count_nonzero(self.model.coef_)}'
 
     def get_ext(self):
         return '.gz'
