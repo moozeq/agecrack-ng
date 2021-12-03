@@ -124,37 +124,21 @@ class Model:
                 results = json.load(f)
         return results
 
+    @property
+    @abstractmethod
+    def features(self) -> list:
+        """[Property needs to be overload] Return features importance"""
+
     @abstractmethod
     def train_model(self, X_train: list, y_train: list, params: dict, models_config: ModelsConfig):
         """[Method needs to be overload] Return trained model"""
 
     @abstractmethod
-    def save_model(self, model_file: str):
-        """[Method needs to be overload] Save trained model"""
-
-    @abstractmethod
-    def load_model(self, model_file: str):
-        """[Method needs to be overload] Load trained model"""
-
-    @abstractmethod
     def get_add_text(self):
         """[Method needs to be overload] Get model additional info for plot"""
 
-    @abstractmethod
-    def get_ext(self):
-        """[Method needs to be overload] Get model save/load extension"""
-
-    def get_ontology(self) -> dict:
-        """Get scores for all clusters used in model with descriptions"""
-        return {
-            cluster: {
-                'score': score,
-                'desc': self.ontology[cluster]
-            }
-            for cluster, score in self.get_features(self.clusters, list(self.features)).items()
-        }
-
     @staticmethod
+    @abstractmethod
     def analysis_check(records_file: str,
                        species_map: Dict[str, dict],
                        class_filter: str,
@@ -167,10 +151,12 @@ class Model:
                        out_directory: str):
         """[Method needs to be overload] For all params in ``grid_params`` run analysis"""
 
-    @property
-    @abstractmethod
-    def features(self) -> dict:
-        """[Property needs to be overload] Return features importance"""
+    @staticmethod
+    def create_ontology(records_file: str, ontology_file: str, mmseq_config: MmseqConfig):
+        genes_to_descs = map_ids_to_descs(records_file)
+        cls_to_descs = map_clusters_to_descs_with_counts(mmseq_config.clusters_file, genes_to_descs)
+        with open(ontology_file, 'w') as f:
+            json.dump(cls_to_descs, f)
 
     @staticmethod
     def run_analysis(records_file: str,
@@ -216,11 +202,9 @@ class Model:
             with open(results_file, 'w') as f:
                 json.dump(final_data, f, indent=4)
 
+        # create file with ontology if does not exists or reloading
         if not Path(ontology_file).exists() or mmseq_config.force_new_mmseqs or mmseq_config.reload_mmseqs:
-            genes_to_descs = map_ids_to_descs(records_file)
-            cls_to_descs = map_clusters_to_descs_with_counts(mmseq_config.clusters_file, genes_to_descs)
-            with open(ontology_file, 'w') as f:
-                json.dump(cls_to_descs, f)
+            Model.create_ontology(records_file, ontology_file, mmseq_config)
 
         # speeding up calculation when loading from dict created before
         if results_dict:
@@ -236,6 +220,24 @@ class Model:
             'score': score
         }
         return m_results, m
+
+    def save_model(self, model_file: str):
+        """Save trained model to file"""
+        compress_pickle.dump(self.model, model_file)
+
+    def load_model(self, model_file: str):
+        """Load trained model from file"""
+        self.model = compress_pickle.load(model_file)
+
+    def get_ontology(self) -> dict:
+        """Get scores for all clusters used in model with descriptions"""
+        return {
+            cluster: {
+                'score': score,
+                'desc': self.ontology[cluster]
+            }
+            for cluster, score in self.get_features(self.clusters, list(self.features)).items()
+        }
 
     @timing
     def process(self,
@@ -259,7 +261,8 @@ class Model:
             map_type(p)
             for p in (list(params.values()) + [models_config.rand])
         )
-        model_file = f'{out_dir}/models/model_{file_suffix}_{model_name}{self.get_ext()}'
+        # file with model is binary compressed to .gz format
+        model_file = f'{out_dir}/models/model_{file_suffix}_{model_name}.gz'
         for new_dir in ['plots', 'models', 'ontology']:
             Path(f'{out_dir}/{new_dir}').mkdir(parents=True, exist_ok=True)
 
@@ -558,17 +561,8 @@ class RF(Model):
         # Train the model using the training sets y_pred=self.model.predict(X_test)
         self.model.fit(X_train, y_train)
 
-    def save_model(self, model_file: str):
-        compress_pickle.dump(self.model, model_file)
-
-    def load_model(self, model_file: str):
-        self.model = compress_pickle.load(model_file)
-
     def get_add_text(self):
         return f'estimators = {len(self.model.estimators_)}'
-
-    def get_ext(self):
-        return '.gz'
 
     @property
     def features(self):
@@ -644,18 +638,9 @@ class EN(Model):
         # Train the model using the training sets
         self.model.fit(X_train, y_train)
 
-    def save_model(self, model_file: str):
-        compress_pickle.dump(self.model, model_file)
-
-    def load_model(self, model_file: str):
-        self.model = compress_pickle.load(model_file)
-
     def get_add_text(self):
         # show only coefs != 0.0
         return f'coefs = {np.count_nonzero(self.model.coef_)}'
-
-    def get_ext(self):
-        return '.gz'
 
     @property
     def features(self):
@@ -710,18 +695,9 @@ class ENCV(Model):
         # Train the model using the training sets
         self.model.fit(X_train, y_train)
 
-    def save_model(self, model_file: str):
-        compress_pickle.dump(self.model, model_file)
-
-    def load_model(self, model_file: str):
-        self.model = compress_pickle.load(model_file)
-
     def get_add_text(self):
         # show only coefs != 0.0
         return f'coefs = {np.count_nonzero(self.model.coef_)}'
-
-    def get_ext(self):
-        return '.gz'
 
     @property
     def features(self):
