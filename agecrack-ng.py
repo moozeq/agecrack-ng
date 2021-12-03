@@ -9,9 +9,8 @@ from src.mmseq import MmseqConfig, mmseq_check
 from src.models import Model, RF, EN, ModelsConfig, ENCV
 from src.ncbi import NCBIDatabase
 from src.ontology import OntologyConfig, ontology_scores
-from src.prot_encode import ESM
 from src.uniprot import download_proteomes_by_names
-from src.utils import extract_proteins, save_records, count_records
+from src.utils import extract_proteins, save_records, count_records, CustomArgparseFormatter
 
 DIR_DATA = 'data'
 DIR_RESULTS = 'results'
@@ -46,80 +45,21 @@ def load_ncbi_db(filename: str) -> NCBIDatabase:
     return NCBIDatabase(filename, DIR_DATA)
 
 
-def load_esm_model() -> ESM:
-    return ESM()
-
-
 def load_grid_params(mode: str, model: str) -> dict:
-    # for full/ontology analysis do multiple parameters from file
-    if mode in ['ontology']:
-        with open('grid_params.json') as f:
-            predef_grid_params = json.load(f)
-    # best estimated parameters for predictors,
-    # wrapped in list for compatibility
-    else:
-        predef_grid_params = {
-            'rf': {
-                'estimators': [300],
-                'depth': [18]
-            },
-            'en': {
-                'alpha': [0.0001],
-                'l1_ratio': [0.5]
-            },
-            'encv': {
-                'l1_ratio': [0.1, 0.5, 0.7, 0.9, 0.95, 0.99, 1.0]
-            }
-        }
-    return predef_grid_params[model]
+    with open('grid_params.json') as f:
+        predef_grid_params = json.load(f)
 
-
-def load_mmseq_config(cluster_file: str,
-                      reload: bool,
-                      mmseq_force: bool,
-                      mmseq_threshold: int) -> MmseqConfig:
-    # create and update ``MmseqConfig``
-    mmseq_config = MmseqConfig(cluster_file,
-                               reload_mmseqs=reload,
-                               force_new_mmseqs=mmseq_force,
-                               cluster_count_threshold=mmseq_threshold)
-    return mmseq_config
-
-
-def load_models_config(models_reuse: bool,
-                       plots_show: bool,
-                       plots_annotate: bool,
-                       plots_annotate_threshold: float,
-                       plots_clusters_count: int,
-                       rand: int,
-                       bins: int,
-                       stratify: bool) -> ModelsConfig:
-    # create and update ``PlotsConfig``
-    models_config = ModelsConfig(models_reuse,
-                                 plots_show,
-                                 plots_annotate,
-                                 plots_annotate_threshold,
-                                 plots_clusters_count,
-                                 rand, bins, stratify)
-    return models_config
-
-
-def load_ontology_config(ontology_dir: str,
-                         ontology_file: str,
-                         out_file: str,
-                         out_plot_file: str) -> OntologyConfig:
-    # create and update ``OntologyConfig``
-    ontology_config = OntologyConfig(ontology_dir,
-                                     ontology_file,
-                                     out_file,
-                                     out_plot_file)
-    return ontology_config
+    # for full/ontology analysis do multiple parameters
+    # for predictor use best estimated parameters
+    # if mode not specified in grid params file use predictor
+    mode = mode if mode in predef_grid_params else 'predictor'
+    return predef_grid_params[mode][model]
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description=AGECRACK_NG_DESCRIPTION,
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=CustomArgparseFormatter
     )
     parser.add_argument('--mode',
                         type=str, default='predictor',
@@ -131,7 +71,7 @@ if __name__ == '__main__':
                              '"vectors" produces additional visualization of species genes vectors, '
                              '"mmseqs-estimation" produces additional plots for mmseqs params estimation')
     parser.add_argument('--model',
-                        type=str, default='encv', choices=['rf', 'encv', 'en'],
+                        type=str, default='rf', choices=['rf', 'encv', 'en'],
                         help='ML model')
     parser.add_argument('--filters',
                         nargs='+', default=[''],
@@ -259,26 +199,39 @@ if __name__ == '__main__':
         # count proteins if specified (impact performance)
         records_count = count_records(seqs_file) if args.count_proteins else '- (counting skipped)'
 
+        # load grid params for ML models from file or predefined ones
         grid_params = load_grid_params(args.mode, args.model)
-        mmseq_config = load_mmseq_config(cluster_file, args.reload, args.mmseq_force, args.mmseq_threshold)
-        ontology_config = load_ontology_config(ontology_dir, ontology_file, ontology_result, ontology_plot)
-        models_config = load_models_config(args.models_reuse,
-                                           args.models_plots_show,
-                                           args.models_plots_annotate,
-                                           args.models_plots_annotate_threshold,
-                                           args.models_plots_clusters_count,
-                                           args.models_rand,
-                                           args.models_bins,
-                                           args.models_stratify)
+
+        # prepare proper configs objects
+        mmseq_config = MmseqConfig(cluster_file,
+                                   args.reload,
+                                   args.mmseq_force,
+                                   args.mmseq_threshold)
+
+        ontology_config = OntologyConfig(ontology_dir,
+                                         ontology_file,
+                                         ontology_result,
+                                         ontology_plot)
+
+        models_config = ModelsConfig(args.models_reuse,
+                                     args.models_plots_show,
+                                     args.models_plots_annotate,
+                                     args.models_plots_annotate_threshold,
+                                     args.models_plots_clusters_count,
+                                     args.models_rand,
+                                     args.models_bins,
+                                     args.models_stratify)
+
+        # select proper model class
+        models = {
+            'rf': RF,
+            'encv': ENCV,
+            'en': EN
+        }
+        selected_model: Model = models[args.model]
 
         # run static method from selected model class
-        if args.mode in ['predictor', 'ontology', 'vectors', 'mmseqs-estimation']:
-            models = {
-                'rf': RF,
-                'encv': ENCV,
-                'en': EN
-            }
-            selected_model: Model = models[args.model]
+        if args.mode in ['predictor', 'ontology', 'vectors']:
             selected_model.analysis_check(
                 seqs_file,
                 sp_map,
@@ -294,12 +247,13 @@ if __name__ == '__main__':
 
         # plot vectors using ``results.json`` from mmseq
         if args.mode in ['vectors']:
-            model = Model.from_file(f'{ex_dir}/results.json', sp_map, args.filter_class, ontology_file)
-            model.visualize_data(sp_map, extract_filter, ex_dir)
+            model = Model(f'{ex_dir}/results.json', sp_map, args.filter_class, ontology_file)
+            model.visualize_vectors(sp_map, extract_filter, ex_dir)
 
-        # using mmseq_check, parameters were estimated: 0.8, 0.8, 0
         if args.mode in ['mmseqs-estimation']:
-            mmseq_check(seqs_file, sp_map, ex_dir, ontology_file)
+            mmseq_check(seqs_file, sp_map, ex_dir, ontology_file,
+                        args.filter_class, grid_params, selected_model,
+                        anage_db, mmseq_config, models_config)
 
         if args.mode in ['ontology', 'ontology-parse']:
             ontology_scores(ontology_config)

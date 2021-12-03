@@ -140,7 +140,7 @@ def ontology_scores(ontology_config: OntologyConfig):
 
     high_clusters = {
         cls: clusters[cls]
-        for cls in list(clusters)[:10]
+        for cls in list(clusters)[:ontology_config.N]
     }
 
     with open(ontology_config.ontology_file) as fo:
@@ -167,3 +167,11 @@ def ontology_scores(ontology_config: OntologyConfig):
         plt.show()
     plt.cla()
     plt.clf()
+
+
+def create_ontology(records_file: str, ontology_file: str, clusters_file: str):
+    """Create file with parsed ontology where clusters are mapped to theirs descriptions"""
+    genes_to_descs = map_ids_to_descs(records_file)
+    cls_to_descs = map_clusters_to_descs_with_counts(clusters_file, genes_to_descs)
+    with open(ontology_file, 'w') as f:
+        json.dump(cls_to_descs, f)

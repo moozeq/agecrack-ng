@@ -1,7 +1,7 @@
 import logging
 
 
-class CustomFormatter(logging.Formatter):
+class CustomLoggerFormatter(logging.Formatter):
     DEBUG = '\033[37m'  # white
     INFO = '\033[36m'  # cyan
     WARNING = '\033[33m'  # yellow
@@ -39,6 +39,6 @@ def load_logger(verbosity: int):
     ch = logging.StreamHandler()
     ch.setLevel(log_level)
 
-    ch.setFormatter(CustomFormatter())
+    ch.setFormatter(CustomLoggerFormatter())
 
     logger.addHandler(ch)

@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import timeit
@@ -7,6 +8,10 @@ from typing import List, Dict
 
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
+
+
+class CustomArgparseFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
+    pass
 
 
 def get_name_from_filename(filename: str) -> str:

@@ -5,11 +5,10 @@ import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Type
 
 import numpy as np
-
-from src.utils import load_and_add_results
+from matplotlib import pyplot as plt
 
 
 @dataclass
@@ -19,15 +18,15 @@ class MmseqConfig:
     # file for clusters
     clusters_file: str
 
+    # config for running ``mmseqs``
+    reload_mmseqs: bool = False  # reload ``mmseqs`` files, when trying different thresholds
+    force_new_mmseqs: bool = False  # force running ``mmseqs`` even if results files exist
+    cluster_count_threshold: int = 0  # threshold for strength of cluster under which they are filtered out
+
     # directly passed to ``mmseqs`` (default values are estimated for this project)
     c: float = 0.8  # List matches above this fraction of aligned (covered) residues
     cov_mode: int = 0  # 0: coverage of query and target; 1: coverage of target; 2: coverage of query
     min_seq_id: float = 0.8  # List matches above this sequence identity (for clustering)
-
-    # config for running ``mmseqs``
-    force_new_mmseqs: bool = False  # force running ``mmseqs`` even if results files exist
-    reload_mmseqs: bool = False  # reload ``mmseqs`` files, when trying different thresholds
-    cluster_count_threshold: int = 0  # threshold for strength of cluster under which they are filtered out
 
 
 def _run_mmseqs(records_file: str,
@@ -100,18 +99,66 @@ def _get_species_clusters_vector(species_genes_ids: List[str], clusters: dict) -
     return vector
 
 
+def mmseq_scatter2d(results: List[dict]):
+    fig = plt.figure()
+    ax = fig.add_subplot()
+
+    colors = ['red', 'green', 'blue']
+    x = [r['mmseqs_params'][1] for r in results]
+    y = [r['score'] for r in results]
+    c = [colors[r['mmseqs_params'][2]] for r in results]
+    ax.scatter(x, y, marker='o', c=c)
+
+    ax.set_xlabel('cov')
+    ax.set_ylabel('score')
+
+    plt.show()
+
+
+def mmseq_scatter3d(results: List[dict], out_file: str, color_by_score: bool = True):
+    """Scatter3D plot for mmseq results. `scores` 0 for training scores, 1 for test scores."""
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+
+    x = [r['mmseqs_params'][0] for r in results]
+    y = [r['mmseqs_params'][1] for r in results]
+    z = [r['score'] for r in results]
+    if color_by_score:
+        c = [r['score'] for r in results]
+        ax.scatter(x, y, z, c=c, cmap='Reds')
+    else:
+        # color by cov mode
+        colors = ['red', 'green', 'blue']
+        c = [colors[r['mmseqs_params'][2]] for r in results]
+        ax.scatter(x, y, z, c=c, cmap='Reds')
+
+    ax.set_xlabel('min_seq')
+    ax.set_ylabel('cov')
+    ax.set_zlabel('score')
+
+    plt.savefig(out_file)
+    plt.show()
+
+
 def mmseq_check(records_file: str,
                 species_map: Dict[str, dict],
                 out_directory: str,
                 ontology_file: str,
+                class_filter: str,
+                params: dict,
+                model_class: Type['Model'],
+                anage_db: 'AnAgeDatabase',
+                mmseq_config: MmseqConfig,
+                models_config: 'ModelsConfig',
                 min_param: float = 0.1,
                 max_param: float = 0.9,
                 step: float = 0.1):
     """Cluster sequences using multiple parameters combinations."""
-    from src.models import Model, ModelsConfig, EN
+    from src.models import Model
+
+    # force new mmseq everytime parameters change
+    mmseq_config.force_new_mmseqs = True
     current_results = []
-    mmseq_config = MmseqConfig(f'{out_directory}/clusters.json')
-    models_config = ModelsConfig()
 
     if not Path(p := f'{out_directory}/check_mmseqs.json').exists():
         # coverage mode is an int: 0, 1 or 2
@@ -121,19 +168,21 @@ def mmseq_check(records_file: str,
                 mmseq_config.min_seq_id = min_seq_id
                 for c in np.arange(min_param, max_param, step):
                     mmseq_config.c = c
-                    r = Model.run_analysis(records_file,
-                                           out_directory,
-                                           species_map, {}, '',
-                                           ontology_file, mmseq_config,
-                                           models_config, None, EN, {})
+                    models_config.files_additional_suffix = f'_{cov_mode}_{min_seq_id}_{c}'
+                    r, m = Model.run_analysis(records_file,
+                                              out_directory,
+                                              species_map, params, class_filter,
+                                              ontology_file, mmseq_config,
+                                              models_config, anage_db, model_class, {})
                     current_results.append(r)
-                with open(p, 'w') as f:
-                    json.dump(current_results, f, indent=4)
+            # update file after each cov mode
+            with open(p, 'w') as f:
+                json.dump(current_results, f, indent=4)
 
-    all_results = load_and_add_results(f'{out_directory}/check_mmseqs.json', current_results)
+    with open(p) as f:
+        all_results = json.load(f)
 
-    Model.scatter3d(all_results, scores=0)
-    Model.scatter3d(all_results)
+    mmseq_scatter3d(all_results, f'{out_directory}/mmseqs.png')
 
 
 def run_mmseqs_pipeline(records_file: str,
