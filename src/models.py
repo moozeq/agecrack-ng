@@ -144,9 +144,15 @@ class Model:
     def get_ext(self):
         """[Method needs to be overload] Get model save/load extension"""
 
-    @abstractmethod
-    def get_ontology(self, X_test, y_test) -> dict:
-        """[Method needs to be overload] Get model ontology for selected features"""
+    def get_ontology(self) -> dict:
+        """Get scores for all clusters used in model with descriptions"""
+        return {
+            cluster: {
+                'score': score,
+                'desc': self.ontology[cluster]
+            }
+            for cluster, score in self.get_features(self.clusters, list(self.features)).items()
+        }
 
     @staticmethod
     def analysis_check(records_file: str,
@@ -304,7 +310,7 @@ class Model:
         ontology_plot_file = f'{out_dir}/ontology/ontology_{file_suffix}_{model_name}.png'
         ontology_file = f'{out_dir}/ontology/ontology_{file_suffix}_{model_name}.json'
         with open(ontology_file, 'w') as f:
-            ontology = self.get_ontology(X_test, y_test)
+            ontology = self.get_ontology()
             json.dump(ontology, f, indent=4)
             self.ontology_plot(ontology_plot_file, models_config)
             logging.info(f'Ontology saved, clusters count = {len(ontology)}')
@@ -410,6 +416,7 @@ class Model:
         if models_config.plots_show:
             plt.show()
         ax.clear()
+        plt.close('all')
         plt.cla()
         plt.clf()
 
@@ -463,7 +470,7 @@ class Model:
             plt.savefig(file)
         if models_config.plots_show:
             plt.show()
-        plt.close()
+        plt.close('all')
         plt.cla()
         plt.clf()
 
@@ -563,15 +570,6 @@ class RF(Model):
     def get_ext(self):
         return '.gz'
 
-    def get_ontology(self, X_test, y_test) -> dict:
-        return {
-            cluster: {
-                'score': coef,
-                'desc': self.ontology[cluster]
-            }
-            for cluster, coef in self.get_features(self.clusters, self.model.feature_importances_).items()
-        }
-
     @property
     def features(self):
         return self.model.feature_importances_
@@ -659,15 +657,6 @@ class EN(Model):
     def get_ext(self):
         return '.gz'
 
-    def get_ontology(self, X_test, y_test) -> dict:
-        return {
-            cluster: {
-                'score': coef,
-                'desc': self.ontology[cluster]
-            }
-            for cluster, coef in self.get_features(self.clusters, self.model.coef_).items()
-        }
-
     @property
     def features(self):
         return self.model.coef_
@@ -734,15 +723,7 @@ class ENCV(Model):
     def get_ext(self):
         return '.gz'
 
-    def get_ontology(self, X_test, y_test) -> dict:
-        return {
-            cluster: {
-                'score': coef,
-                'desc': self.ontology[cluster]
-            }
-            for cluster, coef in self.get_features(self.clusters, self.model.coef_).items()
-        }
-
+    @property
     def features(self):
         return self.model.coef_
 
