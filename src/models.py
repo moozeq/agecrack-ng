@@ -34,7 +34,7 @@ class ModelsConfig:
     plots_clusters_count: int = 10
     rand: int = 1
     bins: int = 0
-    stratify: bool = True
+    stratify: bool = False
     files_additional_suffix: str = ''
     plots_save: bool = True
 
@@ -555,6 +555,8 @@ class RF(Model):
                                                  RF,
                                                  results_dict)
 
+                if proteins_count:
+                    logging.info(f'Number of sequences used in analysis: {proteins_count}')
                 current_results.append({
                     'model': 'RandomForest',
                     'model_params': rf_params,
@@ -612,6 +614,8 @@ class EN(Model):
                                                  EN,
                                                  results_dict)
 
+                if proteins_count:
+                    logging.info(f'Number of sequences used in analysis: {proteins_count}')
                 current_results.append({
                     'model': 'ElasticNet',
                     'model_params': params,
@@ -664,6 +668,8 @@ class ENCV(Model):
                                            ENCV,
                                            results_dict)
 
+        if proteins_count:
+            logging.info(f'Number of sequences used in analysis: {proteins_count}')
         current_results.append({
             'model': 'ElasticNetCV',
             'model_params': params,

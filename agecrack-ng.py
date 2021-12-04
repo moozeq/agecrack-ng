@@ -110,10 +110,7 @@ if __name__ == '__main__':
                         help='Random state for splitting data for training and testing')
     parser.add_argument('--models-stratify',
                         action='store_true', dest='models_stratify',
-                        help='If false, dataset will be stratified using bins')
-    parser.add_argument('--models-no-stratify',
-                        action='store_false', dest='models_stratify',
-                        help='If specified, dataset will NOT be stratified')
+                        help='Try to stratify dataset using bins')
     parser.add_argument('--models-bins',
                         type=int, default=0,
                         help='How many bins for stratifying data, if not specified - number of species divided by 2')
@@ -196,8 +193,8 @@ if __name__ == '__main__':
                 for sp_name, sp_dict in sp_map.items()
             }
 
-        # count proteins if specified (impact performance)
-        records_count = count_records(seqs_file) if args.count_proteins else '- (counting skipped)'
+        # count proteins if specified (may impact performance greatly)
+        records_count = count_records(seqs_file) if args.count_proteins else ''
 
         # load grid params for ML models from file or predefined ones
         grid_params = load_grid_params(args.mode, args.model)
