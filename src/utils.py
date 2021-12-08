@@ -6,11 +6,16 @@ from functools import wraps
 from pathlib import Path
 from typing import List, Dict
 
+import numpy as np
+import pandas as pd
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
+from compress_pickle import compress_pickle
+from numpy import ndarray
 
 
-class CustomArgparseFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
+class CustomArgparseFormatter(argparse.ArgumentDefaultsHelpFormatter,
+                              argparse.RawTextHelpFormatter):
     pass
 
 
@@ -98,20 +103,44 @@ def extract_proteins(filenames: List[str],
             records += data
             species.append(name)
             genes_mapping[name] = [rec.id for rec in data]
-        logging.info(f'Extracted {len(data)} {extract_filter} proteins for: {name}')
+        logging.info(f'Extracted {len(data):6} {extract_filter} proteins for: {name}')
 
     logging.info(f'Loaded {len(records)} {extract_filter} proteins data for {len(species)} species')
     return records, genes_mapping
 
 
+def convert_ys(y, y_p):
+    """Convert y datasets to normalized form"""
+    if isinstance(y, pd.Series):
+        y = y.values
+    if isinstance(y_p[0], ndarray):
+        y_p = np.array([yp[0] for yp in y_p])
+    return y, y_p
+
+
+def save_vectors_file(vectors: dict, clusters: list, anage_db: 'AnAgeDatabase', results_file: str):
+    """Save main results file"""
+    final_data = {
+        'clusters': clusters,
+        'species': {
+            species: {
+                'longevity': anage_db.get_longevity(species),
+                'vec': vectors[species]
+            }
+            for species in vectors
+        }
+    }
+    compress_pickle.dump(final_data, results_file)
+
+
 def timing(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        logging.info(f'[TIMING] Executing "{f.__name__}"...')
+        logging.debug(f'[TIMING] Executing "{f.__name__}"...')
         start = timeit.default_timer()
         result = f(*args, **kwargs)
         end = timeit.default_timer()
-        logging.info(f'[TIMING] Finished calculation, elapsed time = {end - start:.2f} seconds')
+        logging.debug(f'[TIMING] Finished calculation, elapsed time = {end - start:.2f} seconds')
         return result
 
     return wrapper

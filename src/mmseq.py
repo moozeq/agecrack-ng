@@ -202,12 +202,19 @@ def run_mmseqs_pipeline(records_file: str,
     clusters = _parse_mmseqs_file(clusters_tsv, mmseqs_config, mmseqs_config.clusters_file)
     vectors = {}
 
+    logging.info(f'Number of clusters loaded = {len(clusters)}')
+
     species_gene_map = {
         sp: set(species_map[sp]['genes'])
         for sp in species_map
     }
+
     for species, gene_list in species_gene_map.items():
-        logging.info(f'Getting vector for: {species}')
         species_vec = _get_species_clusters_vector(gene_list, clusters)
         vectors[species] = species_vec
+        nonzero_clusters = sum(1 for i in species_vec if i)
+        logging.info(f'Got vector for: {species:28}, '
+                     f'nonzero clusters = {nonzero_clusters:6} ({nonzero_clusters / len(species_vec) * 100.0:.1f}%), '
+                     f'vector sum = {sum(species_vec)}')
+
     return vectors, list(clusters.keys())

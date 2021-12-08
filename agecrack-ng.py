@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import logging
+import sys
+import textwrap
 from pathlib import Path
 
 from src.anage import AnAgeDatabase, AnAgeEntry
 from src.logger import load_logger
-from src.mmseq import MmseqConfig, mmseq_check
+from src.mmseq import MmseqConfig, mmseq_check, run_mmseqs_pipeline
 from src.models import Model, RF, EN, ModelsConfig, ENCV
 from src.ncbi import NCBIDatabase
 from src.ontology import OntologyConfig, ontology_scores
 from src.uniprot import download_proteomes_by_names
-from src.utils import extract_proteins, save_records, count_records, CustomArgparseFormatter
+from src.utils import extract_proteins, save_records, count_records, CustomArgparseFormatter, save_vectors_file
 
 DIR_DATA = 'data'
 DIR_RESULTS = 'results'
@@ -63,13 +66,16 @@ if __name__ == '__main__':
     )
     parser.add_argument('--mode',
                         type=str, default='predictor',
-                        choices=['predictor', 'ontology', 'ontology-parse', 'vectors', 'mmseqs-estimation'],
-                        help='Select mode for running the program, '
-                             '"predictor" gives single best predictor for longevity based on predefined parameters, '
-                             '"ontology" runs analysis for clusters ontology and correlation with longevity, '
-                             '"ontology-parse" parses files obtained in ontology analysis, '
-                             '"vectors" produces additional visualization of species genes vectors, '
-                             '"mmseqs-estimation" produces additional plots for mmseqs params estimation')
+                        choices=['predictor', 'ontology', 'ontology-parse', 'vectors', 'prepare', 'mmseqs-estimation'],
+                        help=textwrap.dedent('''\
+                        Select mode for running the program:
+                             - "predictor" gives single best predictor for longevity based on predefined parameters
+                             - "ontology" runs analysis for clusters ontology and correlation with longevity
+                             - "ontology-parse" parses files obtained in ontology analysis
+                             - "vectors" produces additional visualization of species genes vectors
+                             - "prepare" download all data, cluster them and prepare for further analysis
+                             - "mmseqs-estimation" produces additional plots for mmseqs params estimation
+                        '''))
     parser.add_argument('--model',
                         type=str, default='rf', choices=['rf', 'encv', 'en'],
                         help='ML model')
@@ -152,6 +158,7 @@ if __name__ == '__main__':
         ontology_dir = f'{ex_dir}/ontology'
         ontology_result = f'{ex_dir}/analysis.json'
         ontology_plot = f'{ex_dir}/analysis.png'
+        vectors_file = f'{ex_dir}/vectors.gz'
 
         # download and load AnAge database
         anage_db = None
@@ -165,7 +172,9 @@ if __name__ == '__main__':
                 anage_db.plt_longevity_hist(filenames)
 
             if not Path(seqs_file).exists() or args.mmseq_force or args.reload:
-                sequences, sp_gene_map = extract_proteins(filenames, extract_filter, args.extract_threshold,
+                sequences, sp_gene_map = extract_proteins(filenames,
+                                                          extract_filter,
+                                                          args.extract_threshold,
                                                           args.exclude)
                 save_records(sequences, seqs_file)
 
@@ -227,10 +236,30 @@ if __name__ == '__main__':
         }
         selected_model: Model = models[args.model]
 
+        # if all conditions for new run are met, do it and save results to ``results_file``
+        if (
+                not Path(vectors_file).exists()
+                or args.mode in ['prepare']
+                or mmseq_config.force_new_mmseqs
+                or mmseq_config.reload_mmseqs
+        ):
+            vectors, clusters = run_mmseqs_pipeline(
+                seqs_file,
+                sp_map,
+                mmseq_config,
+                ex_dir
+            )
+            save_vectors_file(vectors, clusters, anage_db, vectors_file)
+            logging.info(f'Clustering and vectorization done, '
+                         f'created ({len(vectors)}) species vectors, each with ({len(clusters)}) in length')
+            if args.mode in ['prepare']:
+                sys.exit(0)
+
         # run static method from selected model class
         if args.mode in ['predictor', 'ontology', 'vectors']:
             selected_model.analysis_check(
                 seqs_file,
+                vectors_file,
                 sp_map,
                 args.filter_class,
                 records_count,
@@ -242,9 +271,9 @@ if __name__ == '__main__':
                 ex_dir
             )
 
-        # plot vectors using ``results.json`` from mmseq
+        # plot vectors using ``vectors.gz`` from mmseq
         if args.mode in ['vectors']:
-            model = Model(f'{ex_dir}/results.json', sp_map, args.filter_class, ontology_file)
+            model = Model(vectors_file, sp_map, args.filter_class, ontology_file)
             model.visualize_vectors(sp_map, extract_filter, ex_dir)
 
         if args.mode in ['mmseqs-estimation']:

@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 from compress_pickle import compress_pickle
 from matplotlib import pyplot as plt
-from numpy import ndarray
 from pandas import DataFrame
 from scipy.stats import pearsonr
 from sklearn.ensemble import RandomForestRegressor
@@ -20,9 +19,9 @@ from sklearn.linear_model import ElasticNet, ElasticNetCV
 from sklearn.model_selection import train_test_split
 
 from src.anage import AnAgeDatabase
-from src.mmseq import MmseqConfig, run_mmseqs_pipeline
+from src.mmseq import MmseqConfig
 from src.ontology import create_ontology
-from src.utils import timing, load_and_add_results
+from src.utils import timing, load_and_add_results, convert_ys
 
 
 @dataclass
@@ -42,7 +41,7 @@ class ModelsConfig:
 class Model:
     def __init__(self, results: Union[str, dict], species_map: Dict[str, dict], class_filter: str, ontology_file: str):
         if type(results) == str:
-            results = Model._read_results_file(results)
+            results = Model._read_vectors_file(results)
 
         self.clusters, self.species = results['clusters'], results['species']
         with open(ontology_file) as f:
@@ -54,10 +53,18 @@ class Model:
 
             return species_map[sp]['AnAgeEntry'].species_class == class_filter if class_filter else True
 
+        # filter out species which shouldn't be included in further analysis
+        # e.g. not in a proper class (Mammalia only)
         self.species = {
             sp_name: sp_data
             for sp_name, sp_data in self.species.items()
             if species_filter(sp_name)
+        }
+
+        # map int index to species name
+        self.index_to_species = {
+            i: species_name
+            for i, species_name in enumerate(self.species)
         }
 
         def get_column(index: int) -> list:
@@ -88,11 +95,20 @@ class Model:
             }
             return sp_phylo_colors, sp_col_map
 
+        non_zero_clusters = sum(
+            sum(get_column(i)) > 0
+            for i, cluster in enumerate(self.clusters)
+        )
+
         # Load dataset
         features = {
             cluster: get_column(i)
             for i, cluster in enumerate(self.clusters)
         }
+
+        logging.info(f'Found {non_zero_clusters} ({non_zero_clusters / len(features) * 100.0:.1f}%) non-zero clusters '
+                     f'within ({len(features)}) clusters and ({len(self.species)}) species')
+
         target = [
             s['longevity']
             for s in self.species.values()
@@ -124,6 +140,7 @@ class Model:
     @staticmethod
     @abstractmethod
     def analysis_check(records_file: str,
+                       vectors_file: str,
                        species_map: Dict[str, dict],
                        class_filter: str,
                        proteins_count: str,
@@ -136,7 +153,7 @@ class Model:
         """[Method needs to be overload] For all params in ``grid_params`` run analysis"""
 
     @staticmethod
-    def _read_results_file(results_filename: str) -> dict:
+    def _read_vectors_file(results_filename: str) -> dict:
         with open(results_filename) as f:
             if results_filename.endswith('.gz'):
                 results = compress_pickle.load(results_filename)
@@ -170,45 +187,24 @@ class Model:
                      models_config: ModelsConfig,
                      anage_db: AnAgeDatabase,
                      model_class: Type['Model'],
-                     results_dict: dict) -> tuple[dict, 'Model']:
+                     results: Union[str, dict]) -> tuple[dict, 'Model']:
         """
         Run full analysis of extracted proteins:
             1. Cluster sequences with provided parameters
             2. For each species create vector with counts of genes in each cluster
             3. Run ``Regressor`` to find predictor
-        """
-        # if all conditions for new run are met, do it and save results to ``results_file``
-        if (
-                not Path(results_file := f'{out_directory}/results.json').exists()
-                or mmseq_config.force_new_mmseqs
-                or mmseq_config.reload_mmseqs
-        ):
-            vectors, clusters = run_mmseqs_pipeline(
-                records_file,
-                species_map,
-                mmseq_config,
-                out_directory
-            )
 
-            final_data = {
-                'clusters': clusters,
-                'species': {
-                    species: {
-                        'longevity': anage_db.get_longevity(species),
-                        'vec': vectors[species]
-                    }
-                    for species in vectors
-                }
-            }
-            with open(results_file, 'w') as f:
-                json.dump(final_data, f, indent=4)
+        Attributes:
+            results: dictionary with vectors data for speeding up calculation when multiple models
+                created at once, or string to file with vectors otherwise
+        """
 
         # create file with ontology if does not exists or reloading
         if not Path(ontology_file).exists() or mmseq_config.force_new_mmseqs or mmseq_config.reload_mmseqs:
             create_ontology(records_file, ontology_file, mmseq_config.clusters_file)
 
         # speeding up calculation when passing data as dict loaded from file before
-        model = model_class(results_dict if results_dict else results_file, species_map, class_filter, ontology_file)
+        model = model_class(results, species_map, class_filter, ontology_file)
         score = model.process(params, out_directory, models_config)
 
         m_results = {
@@ -218,6 +214,10 @@ class Model:
         }
         return m_results, model
 
+    @property
+    def _model_name(self):
+        return type(self).__name__
+
     def _save_model(self, model_file: str):
         """Save trained model to file"""
         compress_pickle.dump(self.model, model_file)
@@ -225,6 +225,49 @@ class Model:
     def _load_model(self, model_file: str):
         """Load trained model from file"""
         self.model = compress_pickle.load(model_file)
+
+    @staticmethod
+    def _process_data(data):
+        return np.log(data)
+
+    @staticmethod
+    def _unprocess_data(data):
+        return math.e ** data
+
+    def _save_predicted_results(self, X_train, X_test, y_train, y_test, results_file: str):
+        """Save real and predicted longevity for each species"""
+        # score model using test data not used in training
+        scores_train = self.model.score(X_train, y_train)
+        scores_test = self.model.score(X_test, y_test)
+
+        # log and save predicted results
+        y_pred_train = self.model.predict(X_train)
+        y_pred_test = self.model.predict(X_test)
+
+        def get_results(y, yp):
+            unsorted_results = {
+                self.index_to_species[index]: {
+                    'known': (raw_known := self._unprocess_data(known_longevity)),
+                    'pred': (raw_pred := self._unprocess_data(yp[i])),
+                    'diff': abs(raw_known - raw_pred)
+                }
+                for i, (index, known_longevity) in enumerate(y.iteritems())
+            }
+            # sort by difference between known and predicted longevity
+            return dict(sorted(unsorted_results.items(), key=lambda item: item[1]['diff']))
+
+        results = {
+            'train': get_results(y_train, y_pred_train),
+            'test': get_results(y_test, y_pred_test)
+        }
+
+        with open(results_file, 'w') as f:
+            json.dump(results, f, indent=4)
+
+        logging.critical(f'Model {self._model_name} (train, test): '
+                         f'score = ({scores_train:.2f}, {scores_test:.2f}), '
+                         f'p-value = ({Model._get_pval(y_train, y_pred_train):.2e}, {Model._get_pval(y_test, y_pred_test):.2e}), '
+                         f'{self.get_add_text()}')
 
     def get_ontology(self) -> dict:
         """Get scores for all clusters used in model with descriptions"""
@@ -242,7 +285,6 @@ class Model:
                 out_dir: str,
                 models_config: ModelsConfig) -> float:
         """Train model on data and return test score"""
-        model_name = type(self).__name__
 
         def map_type(t):
             if type(t) == str:
@@ -261,19 +303,21 @@ class Model:
         )
         file_suffix = f'{file_suffix}{models_config.files_additional_suffix}'
 
-        # file with model is binary compressed to .gz format
-        model_file = f'{out_dir}/models/model_{file_suffix}_{model_name}.gz'
-        for new_dir in ['plots', 'models', 'ontology']:
+        # create directories structure
+        for new_dir in ['plots', 'models', 'ontology', 'results']:
             Path(f'{out_dir}/{new_dir}').mkdir(parents=True, exist_ok=True)
+
+        # file with model is binary compressed to .gz format
+        model_file = f'{out_dir}/models/model_{file_suffix}_{self._model_name}.gz'
 
         # vectors of counts sequences in clusters, order is preserved
         X: DataFrame = self.data[self.clusters]
         # longevity in ln(years)
-        y: DataFrame = np.log(self.data['longevity'])
+        y: DataFrame = self._process_data(self.data['longevity'])
 
         # log model name and parameters
         params_str = ', '.join(f'{param} = {value}' for param, value in params.items())
-        logging.info(f'Processing {model_name} model with parameters: {params_str}')
+        logging.info(f'Processing {self._model_name} model with parameters: {params_str}')
 
         # split dataset into training set and test set
         # stratify is optional, but set to True by default
@@ -290,41 +334,39 @@ class Model:
                                                             stratify=y_binned)
 
         # log distribution of those sets
-        logging.info(f'Dist y_train: (min = {min(y_train):.2f}, max = {max(y_train):.2f}, mean = {mean(y_train):.2f})')
-        logging.info(f'Dist y_test: (min = {min(y_test):.2f}, max = {max(y_test):.2f}, mean = {mean(y_test):.2f})')
+        logging.debug(f'Dist y_train: (min = {min(y_train):.2f}, max = {max(y_train):.2f}, mean = {mean(y_train):.2f})')
+        logging.debug(f'Dist y_test: (min = {min(y_test):.2f}, max = {max(y_test):.2f}, mean = {mean(y_test):.2f})')
 
         # create/load model
         if Path(model_file).exists() and models_config.models_reuse:
+            logging.info(f'Loading {self._model_name} model from file: "{model_file}"')
             self._load_model(model_file)
         else:
-            logging.info(f'Training {model_name} model on {len(y_train)} species and testing on {len(y_test)} species')
+            logging.info(f'Training {self._model_name} model on ({len(y_train)}/{len(y_train + y_test)}) species, '
+                         f'testing on ({len(y_test)}/{len(y_train + y_test)}) species')
             self.train_model(X_train, y_train, params, models_config)
             self._save_model(model_file)
 
-        # score model using test data not used in training
         scores_test = self.model.score(X_test, y_test)
 
-        # log predicted results
-        y_pred = self.model.predict(X_test)
-        logging.critical(f'Model has been trained, '
-                         f'score = {scores_test:.2f}, '
-                         f'p-value < {Model._get_pval(y_test, y_pred):.2e}, '
-                         f'{self.get_add_text()}')
+        # save known and predicted longevity
+        results_file = f'{out_dir}/results/model_{file_suffix}_{self._model_name}.json'
+        self._save_predicted_results(X_train, X_test, y_train, y_test, results_file)
 
         # predictor efficiency plots
-        train_plot_file = f'{out_dir}/plots/train_{file_suffix}_{model_name}.png'
-        test_plot_file = f'{out_dir}/plots/test_{file_suffix}_{model_name}.png'
+        train_plot_file = f'{out_dir}/plots/train_{file_suffix}_{self._model_name}.png'
+        test_plot_file = f'{out_dir}/plots/test_{file_suffix}_{self._model_name}.png'
         self._predict_plot(X_train, y_train, f'Training data', train_plot_file, models_config)
         self._predict_plot(X_test, y_test, f'Testing data', test_plot_file, models_config)
 
         # ontology file and plot
-        ontology_plot_file = f'{out_dir}/ontology/ontology_{file_suffix}_{model_name}.png'
-        ontology_file = f'{out_dir}/ontology/ontology_{file_suffix}_{model_name}.json'
+        ontology_plot_file = f'{out_dir}/ontology/ontology_{file_suffix}_{self._model_name}.png'
+        ontology_file = f'{out_dir}/ontology/ontology_{file_suffix}_{self._model_name}.json'
         with open(ontology_file, 'w') as f:
             ontology = self.get_ontology()
             json.dump(ontology, f, indent=4)
             self._ontology_plot(ontology_plot_file, models_config)
-            logging.info(f'Ontology saved, clusters count = {len(ontology)}')
+            logging.debug(f'Ontology saved, clusters count = {len(ontology)}')
 
         return scores_test
 
@@ -416,7 +458,7 @@ class Model:
         plt.show()
 
     def _ontology_plot(self, file: str, models_config: ModelsConfig):
-        df = pd.DataFrame.from_dict({'scores': list(self.features), 'gene': list(self.ontology)})
+        df = pd.DataFrame.from_dict({'scores': list(self.features), 'gene': list(self.clusters)})
         df = df.sort_values(by='scores', ascending=False).head(models_config.plots_clusters_count)
         fig, ax = plt.subplots()
         df.plot.bar(x='gene', y='scores', ax=ax)
@@ -433,16 +475,8 @@ class Model:
 
     def _predict_plot(self, _x, _y, title: str, file: str, models_config: ModelsConfig):
         """Make prediction scatter plot on train/test data with R2 and p-value in the title"""
-
-        def _convert_ys(y, y_p):
-            if isinstance(y, pd.Series):
-                y = y.values
-            if isinstance(y_p[0], ndarray):
-                y_p = np.array([yp[0] for yp in y_p])
-            return y, y_p
-
         y_pred = self.model.predict(_x)
-        _y, y_pred = _convert_ys(_y, y_pred)
+        _y, y_pred = convert_ys(_y, y_pred)
         phylo_colors = [
             self.phylo_colors_map[idx]
             for idx in _x.index
@@ -522,6 +556,7 @@ class RF(Model):
 
     @staticmethod
     def analysis_check(records_file: str,
+                       vectors_file: str,
                        species_map: Dict[str, dict],
                        class_filter: str,
                        proteins_count: str,
@@ -535,7 +570,7 @@ class RF(Model):
         current_results = []
 
         # read model from file to get it into memory, speeding up multiple calls
-        results_dict = Model._read_results_file(res) if Path(res := f'{out_directory}/results.json').exists() else {}
+        results_dict = Model._read_vectors_file(vectors_file) if Path(vectors_file).exists() else {}
 
         for estimators in grid_params['estimators']:
             for depth in grid_params['depth']:
@@ -583,6 +618,7 @@ class EN(Model):
 
     @staticmethod
     def analysis_check(records_file: str,
+                       vectors_file: str,
                        species_map: Dict[str, dict],
                        class_filter: str,
                        proteins_count: str,
@@ -593,9 +629,9 @@ class EN(Model):
                        anage_db: AnAgeDatabase,
                        out_directory: str):
         """Do Elastic Net Regressor analysis for multiple parameters combinations."""
-
         current_results = []
-        results_dict = Model._read_results_file(res) if Path(res := f'{out_directory}/results.json').exists() else {}
+
+        results_dict = Model._read_vectors_file(vectors_file) if Path(vectors_file).exists() else {}
         for alpha in grid_params['alpha']:
             for l1_ratio in grid_params['l1_ratio']:
                 params = {
@@ -642,6 +678,7 @@ class ENCV(Model):
 
     @staticmethod
     def analysis_check(records_file: str,
+                       vectors_file: str,
                        species_map: Dict[str, dict],
                        class_filter: str,
                        proteins_count: str,
@@ -652,9 +689,9 @@ class ENCV(Model):
                        anage_db: AnAgeDatabase,
                        out_directory: str):
         """Do Elastic Net Regressor with cross validation analysis"""
-
         current_results = []
-        results_dict = Model._read_results_file(res) if Path(res := f'{out_directory}/results.json').exists() else {}
+
+        results_dict = Model._read_vectors_file(vectors_file) if Path(vectors_file).exists() else {}
         params = grid_params
         results, encv = Model.run_analysis(records_file,
                                            out_directory,

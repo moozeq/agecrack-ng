@@ -56,10 +56,10 @@
   "predictor": {
     "rf": {
       "estimators": [
-        300
+        30
       ],
       "depth": [
-        18
+        7
       ]
     },
     "en": {
