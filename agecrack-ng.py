@@ -111,8 +111,12 @@ if __name__ == '__main__':
     parser.add_argument('--models-reuse',
                         action='store_true',
                         help='Reuse ML models from files if exist')
+    parser.add_argument('--models-params',
+                        type=json.loads,
+                        help='Specify params for model as json dict, if not specified '
+                             'the ones from "grid_params.json" will be used')
     parser.add_argument('--models-rand',
-                        type=int, default=1,
+                        type=int, default=17,
                         help='Random state for splitting data for training and testing')
     parser.add_argument('--models-stratify',
                         action='store_true', dest='models_stratify',
@@ -132,9 +136,16 @@ if __name__ == '__main__':
     parser.add_argument('--models-plots-clusters-count',
                         type=int, default=30,
                         help='Up to how many most important clusters should be shown on an ontology plot')
+    parser.add_argument('--mmseq-params',
+                        type=json.loads, default='{"min_seq_id": 0.8, "c": 0.8, "cov_mode": 0}',
+                        help='Specify params for mmseqs as json dict, params = "min_seq_id", "c", "cov_mode"')
     parser.add_argument('--mmseq-threshold',
                         type=int, default=0,
                         help='Clusters under strength of this threshold will be filter out')
+    parser.add_argument('--mmseq-vectors-mode',
+                        type=str, choices=['count', 'bool'], default='count',
+                        help='Vectors mode for species, use "bool" to obtain boolean vectors '
+                             'instead of integer vectors with sequences counts')
     parser.add_argument('--mmseq-force',
                         action='store_true',
                         help='Force re-running mmseq')
@@ -206,13 +217,15 @@ if __name__ == '__main__':
         records_count = count_records(seqs_file) if args.count_proteins else ''
 
         # load grid params for ML models from file or predefined ones
-        grid_params = load_grid_params(args.mode, args.model)
+        grid_params = args.models_params if args.models_params else load_grid_params(args.mode, args.model)
 
         # prepare proper configs objects
         mmseq_config = MmseqConfig(cluster_file,
                                    args.reload,
                                    args.mmseq_force,
-                                   args.mmseq_threshold)
+                                   args.mmseq_threshold,
+                                   args.mmseq_vectors_mode,
+                                   **args.mmseq_params)
 
         ontology_config = OntologyConfig(ontology_dir,
                                          ontology_file,
@@ -277,9 +290,9 @@ if __name__ == '__main__':
             model.visualize_vectors(sp_map, extract_filter, ex_dir)
 
         if args.mode in ['mmseqs-estimation']:
-            mmseq_check(seqs_file, sp_map, ex_dir, ontology_file,
-                        args.filter_class, grid_params, selected_model,
-                        anage_db, mmseq_config, models_config)
+            mmseq_check(seqs_file, vectors_file, sp_map, ex_dir,
+                        ontology_file, args.filter_class, grid_params,
+                        selected_model, anage_db, mmseq_config, models_config)
 
         if args.mode in ['ontology', 'ontology-parse']:
             ontology_scores(ontology_config)

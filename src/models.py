@@ -107,7 +107,7 @@ class Model:
         }
 
         logging.info(f'Found {non_zero_clusters} ({non_zero_clusters / len(features) * 100.0:.1f}%) non-zero clusters '
-                     f'within ({len(features)}) clusters and ({len(self.species)}) species')
+                     f'within ({len(features)}) clusters across ({len(self.species)}) species')
 
         target = [
             s['longevity']
@@ -304,7 +304,7 @@ class Model:
         file_suffix = f'{file_suffix}{models_config.files_additional_suffix}'
 
         # create directories structure
-        for new_dir in ['plots', 'models', 'ontology', 'results']:
+        for new_dir in ['validation', 'clusters', 'models', 'ontology', 'results', 'vectors']:
             Path(f'{out_dir}/{new_dir}').mkdir(parents=True, exist_ok=True)
 
         # file with model is binary compressed to .gz format
@@ -354,21 +354,63 @@ class Model:
         self._save_predicted_results(X_train, X_test, y_train, y_test, results_file)
 
         # predictor efficiency plots
-        train_plot_file = f'{out_dir}/plots/train_{file_suffix}_{self._model_name}.png'
-        test_plot_file = f'{out_dir}/plots/test_{file_suffix}_{self._model_name}.png'
+        train_plot_file = f'{out_dir}/validation/train_{file_suffix}_{self._model_name}.png'
+        test_plot_file = f'{out_dir}/validation/test_{file_suffix}_{self._model_name}.png'
         self._predict_plot(X_train, y_train, f'Training data', train_plot_file, models_config)
         self._predict_plot(X_test, y_test, f'Testing data', test_plot_file, models_config)
 
-        # ontology file and plot
-        ontology_plot_file = f'{out_dir}/ontology/ontology_{file_suffix}_{self._model_name}.png'
+        # ontology file
         ontology_file = f'{out_dir}/ontology/ontology_{file_suffix}_{self._model_name}.json'
         with open(ontology_file, 'w') as f:
             ontology = self.get_ontology()
             json.dump(ontology, f, indent=4)
-            self._ontology_plot(ontology_plot_file, models_config)
             logging.debug(f'Ontology saved, clusters count = {len(ontology)}')
 
+        # clusters importance plot
+        clusters_importance_plot_file = f'{out_dir}/clusters/clusters_{file_suffix}_{self._model_name}.png'
+        self._clusters_importance_plot(clusters_importance_plot_file, models_config)
+        logging.debug(f'Clusters importance plot saved')
+
+        # plot best vectors heatmap
+        vectors_plot_file = f'{out_dir}/vectors/vectors_{file_suffix}_{self._model_name}.png'
+        self._best_clusters_vectors_plot(ontology, models_config, vectors_plot_file)
+        logging.debug(f'Vectors heatmap saved, clusters on the plot up to = {models_config.plots_clusters_count}')
+
         return scores_test
+
+    def _best_clusters_vectors_plot(self, ontology: dict, models_config: ModelsConfig, vectors_plot_file: str):
+        sorted_best_clusters = list(ontology)[:models_config.plots_clusters_count]
+        sorted_clusters_indexes = [self.clusters.index(cls) for cls in sorted_best_clusters]
+        sorted_species_by_longevity = sorted(self.species, key=lambda sp: self.species[sp]['longevity'])
+        species_vecs = [
+            [
+                self.species[sp]['vec'][cls_index]
+                for cls_index in sorted_clusters_indexes
+            ]
+            for sp in sorted_species_by_longevity
+        ]
+        species_labels = [
+            f'{sp} ({self.species[sp]["longevity"]} yrs)'
+            for sp in sorted_species_by_longevity
+        ]
+        sorted_df = pd.DataFrame(species_vecs, columns=sorted_best_clusters, index=sorted_species_by_longevity)
+
+        import seaborn as sns
+        sns.set(rc={'figure.figsize': (16, 8)})
+        g = sns.clustermap(sorted_df, col_cluster=False, row_cluster=False, yticklabels=True, xticklabels=True)
+
+        g.ax_heatmap.set_yticklabels(species_labels, fontsize=(35 / np.sqrt(len(species_labels))))
+        g.ax_heatmap.set_xticklabels(sorted_best_clusters)
+        g.ax_heatmap.tick_params(bottom=False)
+        g.ax_heatmap.set_title(f'Most important clusters counts heatmap, N = {models_config.plots_clusters_count}')
+
+        if models_config.plots_save:
+            g.savefig(vectors_plot_file, dpi=600)
+        if models_config.plots_show:
+            plt.show()
+        plt.close('all')
+        plt.cla()
+        plt.clf()
 
     def visualize_vectors(self, species_map: Dict[str, dict], seqs_filter: str, out_directory: str):
         """Visualize species vectors.
@@ -457,11 +499,11 @@ class Model:
         g.savefig(f'{out_directory}/vectors.png', dpi=600)
         plt.show()
 
-    def _ontology_plot(self, file: str, models_config: ModelsConfig):
-        df = pd.DataFrame.from_dict({'scores': list(self.features), 'gene': list(self.clusters)})
+    def _clusters_importance_plot(self, file: str, models_config: ModelsConfig):
+        df = pd.DataFrame.from_dict({'scores': list(self.features), 'cluster': list(self.clusters)})
         df = df.sort_values(by='scores', ascending=False).head(models_config.plots_clusters_count)
         fig, ax = plt.subplots()
-        df.plot.bar(x='gene', y='scores', ax=ax)
+        df.plot.bar(x='cluster', y='scores', ax=ax)
         fig.tight_layout()
         plt.grid()
         if models_config.plots_save:
@@ -535,14 +577,14 @@ class RF(Model):
     def features(self):
         return self.model.feature_importances_
 
-    def visualize_tree(self):
+    def visualize_tree(self, estimator_index: int):
         """Visualize random forest tree estimator"""
         if not self.model:
             logging.warning(f'No model was found in RF object to visualize')
             return
 
         # Extract single tree
-        estimator = self.model.estimators_[0]
+        estimator = self.model.estimators_[estimator_index]
 
         from sklearn.tree import export_graphviz
         # Export as dot file
@@ -572,8 +614,14 @@ class RF(Model):
         # read model from file to get it into memory, speeding up multiple calls
         results_dict = Model._read_vectors_file(vectors_file) if Path(vectors_file).exists() else {}
 
-        for estimators in grid_params['estimators']:
-            for depth in grid_params['depth']:
+        # wrap params in lists if they are not
+        grid_params = {
+            param: [grid_params[param]] if type(grid_params[param]) != list else grid_params[param]
+            for param in grid_params
+        }
+
+        for estimators in grid_params['n_estimators']:
+            for depth in grid_params['max_depth']:
                 rf_params = {
                     'n_estimators': estimators,
                     'max_depth': depth

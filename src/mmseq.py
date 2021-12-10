@@ -10,6 +10,8 @@ from typing import List, Dict, Type
 import numpy as np
 from matplotlib import pyplot as plt
 
+from src.utils import save_vectors_file
+
 
 @dataclass
 class MmseqConfig:
@@ -22,11 +24,12 @@ class MmseqConfig:
     reload_mmseqs: bool = False  # reload ``mmseqs`` files, when trying different thresholds
     force_new_mmseqs: bool = False  # force running ``mmseqs`` even if results files exist
     cluster_count_threshold: int = 0  # threshold for strength of cluster under which they are filtered out
+    vectors_mode: str = 'count'  # vectors mode, indicating if sequences in clusters should be counted or boolean
 
     # directly passed to ``mmseqs`` (default values are estimated for this project)
+    min_seq_id: float = 0.8  # List matches above this sequence identity (for clustering)
     c: float = 0.8  # List matches above this fraction of aligned (covered) residues
     cov_mode: int = 0  # 0: coverage of query and target; 1: coverage of target; 2: coverage of query
-    min_seq_id: float = 0.8  # List matches above this sequence identity (for clustering)
 
 
 def _run_mmseqs(records_file: str,
@@ -82,7 +85,7 @@ def _parse_mmseqs_file(mmseqs_cluster_tsv: str,
     return s_clusters
 
 
-def _get_species_clusters_vector(species_genes_ids: List[str], clusters: dict) -> List[int]:
+def _get_species_clusters_vector(species_genes_ids: List[str], clusters: dict, mmseq_config: MmseqConfig) -> List[int]:
     """For species filtered proteome and clusters from mmseqs, return vector with genes counts."""
 
     def get_gene_name(rec_id: str) -> str:
@@ -91,10 +94,16 @@ def _get_species_clusters_vector(species_genes_ids: List[str], clusters: dict) -
     def count_genes_in_cluster(g_ids: set, clus: set) -> int:
         return len(clus.intersection(g_ids))
 
+    def check_if_genes_in_cluster(g_ids: set, clus: set) -> int:
+        return 1 if clus.intersection(g_ids) else 0
+
     genes_ids = set(get_gene_name(gene_id) for gene_id in species_genes_ids)
     vector = []
     for cluster_id, cluster_seqs_ids in clusters.items():
-        count = count_genes_in_cluster(genes_ids, cluster_seqs_ids)
+        if mmseq_config.vectors_mode == 'count':
+            count = count_genes_in_cluster(genes_ids, cluster_seqs_ids)
+        else:
+            count = check_if_genes_in_cluster(genes_ids, cluster_seqs_ids)
         vector.append(count)
     return vector
 
@@ -115,7 +124,7 @@ def mmseq_scatter2d(results: List[dict]):
     plt.show()
 
 
-def mmseq_scatter3d(results: List[dict], out_file: str, color_by_score: bool = True):
+def mmseq_scatter3d(results: List[dict], out_file: str, color_by_score: bool = False):
     """Scatter3D plot for mmseq results. `scores` 0 for training scores, 1 for test scores."""
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
@@ -141,6 +150,7 @@ def mmseq_scatter3d(results: List[dict], out_file: str, color_by_score: bool = T
 
 
 def mmseq_check(records_file: str,
+                vectors_file: str,
                 species_map: Dict[str, dict],
                 out_directory: str,
                 ontology_file: str,
@@ -169,11 +179,22 @@ def mmseq_check(records_file: str,
                 for c in np.arange(min_param, max_param, step):
                     mmseq_config.c = c
                     models_config.files_additional_suffix = f'_{cov_mode}_{min_seq_id}_{c}'
+
+                    vectors, clusters = run_mmseqs_pipeline(
+                        records_file,
+                        species_map,
+                        mmseq_config,
+                        out_directory
+                    )
+                    save_vectors_file(vectors, clusters, anage_db, vectors_file)
+                    logging.info(f'Clustering and vectorization done, '
+                                 f'created ({len(vectors)}) species vectors, each with ({len(clusters)}) in length')
+
                     r, m = Model.run_analysis(records_file,
                                               out_directory,
                                               species_map, params, class_filter,
                                               ontology_file, mmseq_config,
-                                              models_config, anage_db, model_class, {})
+                                              models_config, anage_db, model_class, vectors_file)
                     current_results.append(r)
             # update file after each cov mode
             with open(p, 'w') as f:
@@ -210,7 +231,7 @@ def run_mmseqs_pipeline(records_file: str,
     }
 
     for species, gene_list in species_gene_map.items():
-        species_vec = _get_species_clusters_vector(gene_list, clusters)
+        species_vec = _get_species_clusters_vector(gene_list, clusters, mmseqs_config)
         vectors[species] = species_vec
         nonzero_clusters = sum(1 for i in species_vec if i)
         logging.info(f'Got vector for: {species:28}, '

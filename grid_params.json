@@ -1,7 +1,7 @@
 {
   "ontology": {
     "rf": {
-      "estimators": [
+      "n_estimators": [
         10,
         30,
         50,
@@ -9,7 +9,7 @@
         300,
         500
       ],
-      "depth": [
+      "max_depth": [
         3,
         7,
         10,
@@ -55,10 +55,10 @@
   },
   "predictor": {
     "rf": {
-      "estimators": [
+      "n_estimators": [
         30
       ],
-      "depth": [
+      "max_depth": [
         7
       ]
     },
