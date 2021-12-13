@@ -109,12 +109,14 @@ def extract_proteins(filenames: List[str],
     return records, genes_mapping
 
 
-def convert_ys(y, y_p):
+def convert_ys(y, y_p, func):
     """Convert y datasets to normalized form"""
     if isinstance(y, pd.Series):
         y = y.values
     if isinstance(y_p[0], ndarray):
         y_p = np.array([yp[0] for yp in y_p])
+    y = func(y) if func else y
+    y_p = func(y_p) if func else y_p
     return y, y_p
 
 

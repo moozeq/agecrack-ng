@@ -127,6 +127,9 @@ if __name__ == '__main__':
     parser.add_argument('--models-plots-show',
                         action='store_true',
                         help='Show plots for each model')
+    parser.add_argument('--models-plots-unprocess',
+                        action='store_true',
+                        help='Unprocess data for models predicted plots')
     parser.add_argument('--models-plots-annotate',
                         action='store_true',
                         help='Annotate points on models plots with species names')
@@ -237,6 +240,7 @@ if __name__ == '__main__':
                                      args.models_plots_annotate,
                                      args.models_plots_annotate_threshold,
                                      args.models_plots_clusters_count,
+                                     args.models_plots_unprocess,
                                      args.models_rand,
                                      args.models_bins,
                                      args.models_stratify)
@@ -268,8 +272,8 @@ if __name__ == '__main__':
             if args.mode in ['prepare']:
                 sys.exit(0)
 
-        # run static method from selected model class
-        if args.mode in ['predictor', 'ontology', 'vectors']:
+        # run analysis for selected AI model
+        if args.mode in ['predictor', 'ontology']:
             selected_model.analysis_check(
                 seqs_file,
                 vectors_file,

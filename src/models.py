@@ -31,6 +31,7 @@ class ModelsConfig:
     plots_annotate: bool = False
     plots_annotate_threshold: float = 0.5
     plots_clusters_count: int = 10
+    plots_unprocess_data: bool = False
     rand: int = 1
     bins: int = 0
     stratify: bool = False
@@ -334,8 +335,15 @@ class Model:
                                                             stratify=y_binned)
 
         # log distribution of those sets
-        logging.debug(f'Dist y_train: (min = {min(y_train):.2f}, max = {max(y_train):.2f}, mean = {mean(y_train):.2f})')
-        logging.debug(f'Dist y_test: (min = {min(y_test):.2f}, max = {max(y_test):.2f}, mean = {mean(y_test):.2f})')
+        logging.info(f'Dist y: (min = {min(self._unprocess_data(y)):.2f}, '
+                     f'max = {max(self._unprocess_data(y)):.2f}, '
+                     f'mean = {mean(self._unprocess_data(y)):.2f})')
+        logging.info(f'Dist y_train: (min = {min(self._unprocess_data(y_train)):.2f}, '
+                     f'max = {max(self._unprocess_data(y_train)):.2f}, '
+                     f'mean = {mean(self._unprocess_data(y_train)):.2f})')
+        logging.info(f'Dist y_test: (min = {min(self._unprocess_data(y_test)):.2f}, '
+                     f'max = {max(self._unprocess_data(y_test)):.2f}, '
+                     f'mean = {mean(self._unprocess_data(y_test)):.2f})')
 
         # create/load model
         if Path(model_file).exists() and models_config.models_reuse:
@@ -518,7 +526,9 @@ class Model:
     def _predict_plot(self, _x, _y, title: str, file: str, models_config: ModelsConfig):
         """Make prediction scatter plot on train/test data with R2 and p-value in the title"""
         y_pred = self.model.predict(_x)
-        _y, y_pred = convert_ys(_y, y_pred)
+        # pass unprocess data function if specified in config
+        unprocessed_func = self._unprocess_data if models_config.plots_unprocess_data else None
+        _y, y_pred = convert_ys(_y, y_pred, unprocessed_func)
         phylo_colors = [
             self.phylo_colors_map[idx]
             for idx in _x.index
@@ -538,11 +548,18 @@ class Model:
                     plt.annotate(sp_map[idx], (_y[i], y_pred[i]))
 
         plt.scatter(_y, y_pred, c=phylo_colors)
-        plt.ylabel('Predicted Lifespan (ln)')
-        plt.xlabel('Known Lifespan (ln)')
-        plt.title(f'{title}, R2 = {self.model.score(_x, _y):.2f}, '
-                  f'p-value < {Model._get_pval(_y, y_pred):.2e}, '
-                  f'{self.get_add_text()}')
+
+        if not models_config.plots_unprocess_data:
+            plt.ylabel('Predicted Lifespan (ln)')
+            plt.xlabel('Known Lifespan (ln)')
+            plt.title(f'{title}, R2 = {self.model.score(_x, _y):.2f}, '
+                      f'p-value < {Model._get_pval(_y, y_pred):.2e}, '
+                      f'{self.get_add_text()}')
+        else:
+            plt.ylabel('Predicted Lifespan (yrs)')
+            plt.xlabel('Known Lifespan (yrs)')
+            plt.title(f'{title}, '
+                      f'{self.get_add_text()}')
 
         # regression line
         coef = np.polyfit(np.array(_y), np.array(y_pred), 1)
