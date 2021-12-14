@@ -114,7 +114,7 @@ def mmseq_scatter2d(results: List[dict]):
 
     colors = ['red', 'green', 'blue']
     x = [r['mmseqs_params'][1] for r in results]
-    y = [r['score'] for r in results]
+    y = [r['test_score'] for r in results]
     c = [colors[r['mmseqs_params'][2]] for r in results]
     ax.scatter(x, y, marker='o', c=c)
 
@@ -131,9 +131,9 @@ def mmseq_scatter3d(results: List[dict], out_file: str, color_by_score: bool = F
 
     x = [r['mmseqs_params'][0] for r in results]
     y = [r['mmseqs_params'][1] for r in results]
-    z = [r['score'] for r in results]
+    z = [r['test_score'] for r in results]
     if color_by_score:
-        c = [r['score'] for r in results]
+        c = [r['test_score'] for r in results]
         ax.scatter(x, y, z, c=c, cmap='Reds')
     else:
         # color by cov mode

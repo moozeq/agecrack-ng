@@ -58,7 +58,7 @@ def map_clusters_to_descs_with_counts(cluster_file: str, genes_to_descs: dict) -
         }
 
 
-def ontology_stats(ontology_config: OntologyConfig):
+def ontology_stats(ontology_config: OntologyConfig, max_places: int = 10):
     """Plot frequencies for the most important clusters on first 10 places"""
     with open(ontology_config.ontology_file) as fo:
         onto_dict = json.load(fo)
@@ -80,7 +80,7 @@ def ontology_stats(ontology_config: OntologyConfig):
             ontology = json.load(f)
             for i, cluster in enumerate(ontology):
                 points[i].append(cluster)
-                if i == 9:
+                if i == max_places - 1:
                     break
     points_counters = {
         i: get_onto(onto)
@@ -117,6 +117,8 @@ def ontology_stats(ontology_config: OntologyConfig):
             mpatches.Patch(color=col, label=c)
             for c, col in c_map.items()
         ]
+        plt.ylabel(f'Cluster frequency per place')
+        plt.title(f'Frequencies at first 10 places {ontology_config.N} most important clusters')
         plt.legend(handles=patches, bbox_to_anchor=(1, 1), loc="upper left")
         if ontology_config.plot_save:
             plt.savefig(ontology_config.out_plot_file)
@@ -165,6 +167,7 @@ def ontology_scores(ontology_config: OntologyConfig):
         plt.savefig(ontology_config.out_plot_file)
     if ontology_config.plot_show:
         plt.show()
+    plt.close('all')
     plt.cla()
     plt.clf()
 

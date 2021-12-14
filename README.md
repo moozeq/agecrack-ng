@@ -1,6 +1,6 @@
-# agecrack-ng
+# Agecrack-ng
 
-agecrack-ng is a tool for searching and extracting age-related features from data.
+`Agecrack-ng` is a tool for searching and extracting age-related features from data.
 
 ## Run
 
@@ -33,6 +33,9 @@ pip install -r requirements.txt
 ./agecrack-ng.py -vv --mode ontology --model rf --filters repair --mmseq-vectors-mode bool --models-rand 1 --mmseq-params '{"min_seq_id": 0.8, "c": 0.2, "cov_mode": 2}'
 ```
 
+![train-vertebrates](doc/all_train.png)
+![test-vertebrates](doc/all_test.png)
+
 ### Mammalia
 
 ```bash
@@ -45,3 +48,6 @@ pip install -r requirements.txt
 # gather multiple models and analyse them all
 ./agecrack-ng.py -vv --mode ontology --model rf --filter-class Mammalia --exclude 'Homo sapiens' --extract-threshold 1000 --models-plots-annotate --models-rand 17 --mmseq-params '{"min_seq_id": 0.8, "c": 0.8, "cov_mode": 0}'
 ```
+
+![train-mammalia](doc/mammalia_train.png)
+![test-mammalia](doc/mammalia_test.png)

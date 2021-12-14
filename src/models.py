@@ -23,6 +23,15 @@ from src.mmseq import MmseqConfig
 from src.ontology import create_ontology
 from src.utils import timing, load_and_add_results, convert_ys
 
+ANALYSIS_DIRS = [
+    'validation',  # validation plots for train and test data
+    'clusters',  # clusters importance plots for N the most important ones
+    'models',  # models files ready to use
+    'ontology',  # clusters with descriptions and scores for each model
+    'results',  # data with real and predicted lifespans for all species
+    'vectors'  # plots with N vectors for the most important clusters
+]
+
 
 @dataclass
 class ModelsConfig:
@@ -206,12 +215,11 @@ class Model:
 
         # speeding up calculation when passing data as dict loaded from file before
         model = model_class(results, species_map, class_filter, ontology_file)
-        score = model.process(params, out_directory, models_config)
+        train_score, test_score = model.process(params, out_directory, models_config)
 
         m_results = {
-            'mmseqs_params': [mmseq_config.min_seq_id, mmseq_config.c, mmseq_config.cov_mode],
-            'params': params,
-            'score': score
+            'train_score': train_score,
+            'test_score': test_score
         }
         return m_results, model
 
@@ -284,8 +292,8 @@ class Model:
     def process(self,
                 params: dict,
                 out_dir: str,
-                models_config: ModelsConfig) -> float:
-        """Train model on data and return test score"""
+                models_config: ModelsConfig) -> (float, float):
+        """Train model on data and return train and test scores"""
 
         def map_type(t):
             if type(t) == str:
@@ -305,7 +313,7 @@ class Model:
         file_suffix = f'{file_suffix}{models_config.files_additional_suffix}'
 
         # create directories structure
-        for new_dir in ['validation', 'clusters', 'models', 'ontology', 'results', 'vectors']:
+        for new_dir in ANALYSIS_DIRS:
             Path(f'{out_dir}/{new_dir}').mkdir(parents=True, exist_ok=True)
 
         # file with model is binary compressed to .gz format
@@ -355,8 +363,6 @@ class Model:
             self.train_model(X_train, y_train, params, models_config)
             self._save_model(model_file)
 
-        scores_test = self.model.score(X_test, y_test)
-
         # save known and predicted longevity
         results_file = f'{out_dir}/results/model_{file_suffix}_{self._model_name}.json'
         self._save_predicted_results(X_train, X_test, y_train, y_test, results_file)
@@ -364,8 +370,8 @@ class Model:
         # predictor efficiency plots
         train_plot_file = f'{out_dir}/validation/train_{file_suffix}_{self._model_name}.png'
         test_plot_file = f'{out_dir}/validation/test_{file_suffix}_{self._model_name}.png'
-        self._predict_plot(X_train, y_train, f'Training data', train_plot_file, models_config)
-        self._predict_plot(X_test, y_test, f'Testing data', test_plot_file, models_config)
+        train_score = self._predict_plot(X_train, y_train, f'Training data', train_plot_file, models_config)
+        test_score = self._predict_plot(X_test, y_test, f'Testing data', test_plot_file, models_config)
 
         # ontology file
         ontology_file = f'{out_dir}/ontology/ontology_{file_suffix}_{self._model_name}.json'
@@ -384,7 +390,7 @@ class Model:
         self._best_clusters_vectors_plot(ontology, models_config, vectors_plot_file)
         logging.debug(f'Vectors heatmap saved, clusters on the plot up to = {models_config.plots_clusters_count}')
 
-        return scores_test
+        return train_score, test_score
 
     def _best_clusters_vectors_plot(self, ontology: dict, models_config: ModelsConfig, vectors_plot_file: str):
         sorted_best_clusters = list(ontology)[:models_config.plots_clusters_count]
@@ -514,11 +520,13 @@ class Model:
         df.plot.bar(x='cluster', y='scores', ax=ax)
         fig.tight_layout()
         plt.grid()
+        plt.ylabel('Cluster importance')
         if models_config.plots_save:
             plt.savefig(file)
         if models_config.plots_show:
             plt.show()
         ax.clear()
+        fig.clear(True)
         plt.close('all')
         plt.cla()
         plt.clf()
@@ -549,11 +557,16 @@ class Model:
 
         plt.scatter(_y, y_pred, c=phylo_colors)
 
+        # calculate score and p-value
+        score = self.model.score(_x, _y)
+        pval = Model._get_pval(_y, y_pred)
+
+        # show score and p-value for processed data
         if not models_config.plots_unprocess_data:
             plt.ylabel('Predicted Lifespan (ln)')
             plt.xlabel('Known Lifespan (ln)')
-            plt.title(f'{title}, R2 = {self.model.score(_x, _y):.2f}, '
-                      f'p-value < {Model._get_pval(_y, y_pred):.2e}, '
+            plt.title(f'{title}, R2 = {score:.2f}, '
+                      f'p-value < {pval:.2e}, '
                       f'{self.get_add_text()}')
         else:
             plt.ylabel('Predicted Lifespan (yrs)')
@@ -578,6 +591,8 @@ class Model:
         plt.close('all')
         plt.cla()
         plt.clf()
+
+        return score
 
 
 class RF(Model):
@@ -639,14 +654,14 @@ class RF(Model):
 
         for estimators in grid_params['n_estimators']:
             for depth in grid_params['max_depth']:
-                rf_params = {
+                params = {
                     'n_estimators': estimators,
                     'max_depth': depth
                 }
                 results, rf = Model.run_analysis(records_file,
                                                  out_directory,
                                                  species_map,
-                                                 rf_params,
+                                                 params,
                                                  class_filter,
                                                  ontology_file,
                                                  mmseq_config,
@@ -659,7 +674,12 @@ class RF(Model):
                     logging.info(f'Number of sequences used in analysis: {proteins_count}')
                 current_results.append({
                     'model': 'RandomForest',
-                    'model_params': rf_params,
+                    'model_params': params,
+                    'mmseqs_params': {
+                        'min-seq-id': mmseq_config.min_seq_id,
+                        'c': mmseq_config.c,
+                        'cov-mode': mmseq_config.cov_mode
+                    },
                     'results': results
                 })
 
@@ -720,6 +740,11 @@ class EN(Model):
                 current_results.append({
                     'model': 'ElasticNet',
                     'model_params': params,
+                    'mmseqs_params': {
+                        'min-seq-id': mmseq_config.min_seq_id,
+                        'c': mmseq_config.c,
+                        'cov-mode': mmseq_config.cov_mode
+                    },
                     'results': results
                 })
 
@@ -775,6 +800,11 @@ class ENCV(Model):
         current_results.append({
             'model': 'ElasticNetCV',
             'model_params': params,
+            'mmseqs_params': {
+                'min-seq-id': mmseq_config.min_seq_id,
+                'c': mmseq_config.c,
+                'cov-mode': mmseq_config.cov_mode
+            },
             'results': results
         })
 

@@ -11,7 +11,7 @@ from src.logger import load_logger
 from src.mmseq import MmseqConfig, mmseq_check, run_mmseqs_pipeline
 from src.models import Model, RF, EN, ModelsConfig, ENCV
 from src.ncbi import NCBIDatabase
-from src.ontology import OntologyConfig, ontology_scores
+from src.ontology import OntologyConfig, ontology_scores, ontology_stats
 from src.uniprot import download_proteomes_by_names
 from src.utils import extract_proteins, save_records, count_records, CustomArgparseFormatter, save_vectors_file
 
@@ -105,6 +105,9 @@ if __name__ == '__main__':
     parser.add_argument('--count-proteins',
                         action='store_true',
                         help='Count proteins for proper log messages (can impact performance greatly)')
+    parser.add_argument('--ontology-plots-freqs',
+                        action='store_true',
+                        help='Show and save plot for clusters frequencies at first 10 places instead importance')
     parser.add_argument('--reload',
                         action='store_true',
                         help='Reload produced files, set when changing thresholds')
@@ -299,4 +302,7 @@ if __name__ == '__main__':
                         selected_model, anage_db, mmseq_config, models_config)
 
         if args.mode in ['ontology', 'ontology-parse']:
-            ontology_scores(ontology_config)
+            if args.ontology_plots_freqs:
+                ontology_stats(ontology_config)
+            else:
+                ontology_scores(ontology_config)
