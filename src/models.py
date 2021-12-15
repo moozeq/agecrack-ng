@@ -478,8 +478,6 @@ class Model:
         }
 
         import seaborn as sns
-        sns.set(rc={'figure.figsize': (16, 8)})
-
         sorted_df.insert(0, 'phylo', sp_idx_map)
 
         network_pal = sns.cubehelix_palette(len(sp_classes),
@@ -495,22 +493,29 @@ class Model:
         columns_to_drop = ['phylo', 'longevity']
         sorted_df.drop(columns_to_drop, axis='columns', inplace=True)
 
-        g = sns.clustermap(sorted_df, row_cluster=False, row_colors=row_colors, yticklabels=True, xticklabels=True)
+        g = sns.clustermap(sorted_df,
+                           # cmap='RdGy_r',
+                           figsize=(8, 8),
+                           row_cluster=False,
+                           row_colors=row_colors,
+                           yticklabels=True,
+                           xticklabels=True)
         for label in sp_phylo_colors:
             g.ax_heatmap.bar(0, 0, color=network_lut[label],
                              label=label, linewidth=0)
         g.ax_heatmap.legend(ncol=3, bbox_to_anchor=(1.0, 1.25))
 
         longevity_labels = [
-            str(int(longevity[int(txt._text)]))
+            f'{self.index_to_species[int(txt._text)]} ({longevity[int(txt._text)]:.2f} yrs)'
             for txt in g.ax_heatmap.get_yticklabels()
         ]
-        g.ax_heatmap.set_yticklabels(longevity_labels, fontsize=3)
+        g.ax_heatmap.set_yticklabels(longevity_labels, fontsize=(35 / np.sqrt(len(longevity_labels))))
         g.ax_heatmap.set_xticklabels([])
         g.ax_heatmap.tick_params(bottom=False)
         g.ax_col_dendrogram.set_visible(False)
         g.ax_heatmap.set_title(f'Clustered vertebrates {seqs_filter} proteins sequences')
         g.savefig(f'{out_directory}/vectors.png', dpi=600)
+
         plt.show()
 
     def _clusters_importance_plot(self, file: str, models_config: ModelsConfig):
