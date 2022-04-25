@@ -9,6 +9,7 @@ from typing import List, Dict, Type
 
 import numpy as np
 from matplotlib import pyplot as plt
+from numpy import mean, median
 
 from src.utils import save_vectors_file
 
@@ -106,6 +107,30 @@ def _get_species_clusters_vector(species_genes_ids: List[str], clusters: dict, m
             count = check_if_genes_in_cluster(genes_ids, cluster_seqs_ids)
         vector.append(count)
     return vector
+
+
+def cluster_counts(clusters: dict, file: str):
+    """Clusters counts plots."""
+    clusters_lengths = [
+        len(prots)
+        for prots in clusters.values()
+    ]
+    plt.title(f'Clusters (count = {len(clusters_lengths)}) histogram, zoomed')
+    plt.axvline(mean(clusters_lengths), color='r', linestyle='--', label=f'mean {mean(clusters_lengths):.2f}')
+    plt.axvline(median(clusters_lengths), color='g', linestyle='--', label=f'median {median(clusters_lengths):.2f}')
+    plt.legend()
+    plt.xlim(0, 50)
+    plt.ylim(0, 40)
+    plt.xlabel('Number of sequences in cluster')
+    plt.ylabel('Number of clusters')
+    plt.hist(clusters_lengths, bins=200)
+    plt.minorticks_on()
+    plt.grid(True, which='both')
+    plt.savefig(file)
+    plt.show()
+    plt.close('all')
+    plt.cla()
+    plt.clf()
 
 
 def mmseq_scatter2d(results: List[dict]):
