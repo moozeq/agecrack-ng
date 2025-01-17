@@ -5,7 +5,7 @@ fair-esm
 biopython
 joblib
 compress_pickle
-sklearn
+scikit-learn
 pandas
 seaborn
 fastcluster
